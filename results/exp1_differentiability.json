@@ -1,0 +1,74 @@
+{
+  "frequency_hz": 5000000000.0,
+  "plate_m": 1.0,
+  "schemes": {
+    "Conventional (Eq. 3)": {
+      "continuity": {
+        "max_jump": 0.0021338934074152526,
+        "max_jump_normalised": 0.9554968040816215,
+        "mean_step": 5.58320393720796e-06
+      },
+      "gradient_vs_fd": {
+        "rel_l2_error": 3.7146534301946252e-09,
+        "cosine_similarity": 0.9999999999999999,
+        "max_abs_error": 1.2595194609499316e-09
+      },
+      "geometry_gradient": {
+        "fraction_nonzero": 0.0,
+        "cosine_similarity_with_fd": 0.0,
+        "mean_abs": 0.0
+      }
+    },
+    "Soften triangle (Eq. 4)": {
+      "continuity": {
+        "max_jump": 1.3605044892437508e-05,
+        "max_jump_normalised": 0.0061706555976675116,
+        "mean_step": 5.51199328705858e-06
+      },
+      "gradient_vs_fd": {
+        "rel_l2_error": 2.109515198928996e-09,
+        "cosine_similarity": 1.0,
+        "max_abs_error": 6.294099963444211e-10
+      },
+      "geometry_gradient": {
+        "fraction_nonzero": 1.0,
+        "cosine_similarity_with_fd": 0.9999977699553174,
+        "mean_abs": 0.005085966695711043
+      }
+    },
+    "RFDT (Eq. 11)": {
+      "continuity": {
+        "max_jump": 2.277833736515672e-05,
+        "max_jump_normalised": 0.011368252207547233,
+        "mean_step": 5.009199512224597e-06
+      },
+      "gradient_vs_fd": {
+        "rel_l2_error": 2.5498565360700513e-09,
+        "cosine_similarity": 1.0,
+        "max_abs_error": 3.976105000802477e-10
+      },
+      "geometry_gradient": {
+        "fraction_nonzero": 0.49382716049382713,
+        "cosine_similarity_with_fd": 0.9843500793978434,
+        "mean_abs": 0.004352868054357324
+      }
+    },
+    "RFDT + diffraction": {
+      "continuity": {
+        "max_jump": 1.2881751757189825e-05,
+        "max_jump_normalised": 0.006742012299663973,
+        "mean_step": 6.101354532502683e-06
+      },
+      "gradient_vs_fd": {
+        "rel_l2_error": 2.072868454348537e-09,
+        "cosine_similarity": 1.0000000000000002,
+        "max_abs_error": 2.66568815632251e-10
+      },
+      "geometry_gradient": {
+        "fraction_nonzero": 1.0,
+        "cosine_similarity_with_fd": 0.9964425353500488,
+        "mean_abs": 0.00545402435110908
+      }
+    }
+  }
+}

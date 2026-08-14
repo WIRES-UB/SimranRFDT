@@ -1,0 +1,8 @@
+# RFDT indoor RF simulator
+#
+# torch >= 2.5 is required with numpy >= 2: torch 2.2/2.3 wheels are built
+# against the numpy 1.x ABI and fail with "Failed to initialize NumPy" when
+# numpy 2 is installed.
+torch>=2.5
+numpy>=1.24
+matplotlib>=3.6
