@@ -354,6 +354,49 @@ def test_anneal_schedule_is_monotone_and_reaches_one():
     assert all(b >= a - 1e-12 for a, b in zip(vals, vals[1:]))
 
 
+def test_two_ray_notch_spacing_matches_theory():
+    """Frequency-domain check: notch spacing of a two-ray channel is c / dL.
+
+    A single reflector makes the transfer function a comb of notches whose
+    spacing depends only on the path-length difference.  This exercises the
+    frequency-domain path (``ofdm_channel``) against closed-form analysis, and
+    is sensitive to any error in path length or phase.
+    """
+    from rfdt.signal import ofdm_channel
+    mesh = scenes.plate_scene(plate_size=(30.0, 30.0), material="metal")
+    tx = Transmitter((0.0, 0.0, 2.0), 5e9, 20.0, Antenna("isotropic"))
+    rx = Receiver((3.0, 0.0, 1.0), Antenna("isotropic"))
+    p = RFDTracer(mesh, TracerConfig(max_order=1,
+                                     enable_diffraction=False)).trace(tx, rx)
+    assert p.n_paths() == 2
+
+    freqs = torch.linspace(4e9, 6e9, 4001, dtype=torch.float64)
+    h = ofdm_channel(p.delay, p.gain, freqs).squeeze().abs().numpy()
+    interior = np.arange(1, len(h) - 1)
+    minima = interior[(h[1:-1] < h[:-2]) & (h[1:-1] < h[2:])]
+    spacing = float(np.mean(np.diff(freqs.numpy()[minima])))
+
+    l_direct = np.sqrt(3.0 ** 2 + 1.0 ** 2)
+    l_reflect = np.sqrt(3.0 ** 2 + 3.0 ** 2)
+    expected = C0 / (l_reflect - l_direct)
+    assert abs(spacing - expected) / expected < 0.01, (spacing, expected)
+
+
+def test_group_delay_equals_propagation_delay():
+    """The phase slope of a single-path channel must equal its delay."""
+    from rfdt.signal import ofdm_channel
+    mesh = scenes.plate_scene(center=(0.0, 0.0, -60.0))
+    tx = Transmitter((0.0, 0.0, 2.0), 5e9, 20.0, Antenna("isotropic"))
+    rx = Receiver((3.0, 0.0, 1.0), Antenna("isotropic"))
+    p = RFDTracer(mesh, TracerConfig(max_order=0,
+                                     enable_diffraction=False)).trace(tx, rx)
+    freqs = torch.linspace(4.9e9, 5.1e9, 201, dtype=torch.float64)
+    h = ofdm_channel(p.delay, p.gain, freqs).squeeze().numpy()
+    phase = np.unwrap(np.angle(h))
+    gd = -np.gradient(phase, 2.0 * np.pi * freqs.numpy())
+    assert abs(float(np.mean(gd)) - float(p.delay.squeeze())) < 1e-15
+
+
 def test_doppler_sign_convention():
     """A receiver approaching the transmitter must give a positive shift."""
     mesh = scenes.plate_scene(center=(0.0, 0.0, -50.0))

@@ -1,0 +1,57 @@
+{
+  "A_two_ray": {
+    "l_direct_m": 3.1622776601683795,
+    "l_reflect_m": 4.242640687119285,
+    "delta_l_m": 1.0803630269509052,
+    "notch_spacing_analytic_hz": 277492334.0778335,
+    "notch_spacing_measured_hz": 277666666.6666667,
+    "notch_spacing_error_pct": 0.0628242900520324,
+    "n_notches_found": 7,
+    "los_n_notches": 0,
+    "los_slope_db_simulated": 3.52182518111362,
+    "los_slope_db_analytic": 3.5218251811136247,
+    "ref_notch_depth_db": 19.92494357938081,
+    "los_group_delay_ns": 10.548222864793953,
+    "expected_group_delay_ns": 10.54822286479395,
+    "narrowband_max_error_db": 3.3127158685227087
+  },
+  "C_room": {
+    "metal": {
+      "coherence_bw_measured_mhz": 55.0,
+      "delay_spread_ns": 3.792600915171232,
+      "coherence_bw_rule_of_thumb_mhz": 52.734259278363915,
+      "fading_depth_db": 31.720529323190156,
+      "mean_level_dbm": -38.997092779228566
+    },
+    "concrete": {
+      "coherence_bw_measured_mhz": 315.0,
+      "delay_spread_ns": 2.488498874669747,
+      "coherence_bw_rule_of_thumb_mhz": 80.36973696704699,
+      "fading_depth_db": 14.853446190379312,
+      "mean_level_dbm": -40.12685177415675
+    },
+    "foam_board": {
+      "coherence_bw_measured_mhz": 485.0,
+      "delay_spread_ns": 1.4389882229971813,
+      "coherence_bw_rule_of_thumb_mhz": 138.98654402009777,
+      "fading_depth_db": 7.699383315022831,
+      "mean_level_dbm": -40.436742083525694
+    }
+  },
+  "band_a_hz": [
+    4000000000.0,
+    6000000000.0
+  ],
+  "band_c_hz": [
+    4500000000.0,
+    5500000000.0
+  ],
+  "n_freq_a": 1001,
+  "n_freq_c": 201,
+  "receiver_position_m": [
+    3.6,
+    2.2,
+    0.9
+  ],
+  "runtime_s": 150.02623915672302
+}

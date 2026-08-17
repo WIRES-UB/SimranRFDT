@@ -32,6 +32,8 @@ EXPERIMENTS = {
         "robot-mounted 77 GHz FMCW radar versus material"),
     4: ("exp4_inverse_material",
         "recover material and geometry from RF measurements (Sec. 5.2)"),
+    5: ("exp5_frequency_response",
+        "channel frequency response: amplitude, phase and coherence bandwidth"),
 }
 
 

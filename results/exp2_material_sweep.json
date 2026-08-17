@@ -15,7 +15,7 @@
     "route_length_m": 11.82605932850463,
     "freq_samples_per_band": 5,
     "max_order": 2,
-    "runtime_s": 180.47520685195923
+    "runtime_s": 180.9944019317627
   },
   "bands": {
     "5 GHz": {
@@ -29,7 +29,7 @@
           "fade_depth_db": 22.397508652916294,
           "delay_spread_ns": 4.384604515676642,
           "k_factor_db": -3.6051203736165243,
-          "coherence_bw_mhz": 47.86437306331341,
+          "coherence_bw_rule_of_thumb_mhz": 47.86437306331341,
           "angular_spread_deg": 59.23329143866402,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -103,7 +103,7 @@
           "fade_depth_db": 24.29111395526362,
           "delay_spread_ns": 3.0655289066697957,
           "k_factor_db": 2.6278583290445376,
-          "coherence_bw_mhz": 66.75611818213142,
+          "coherence_bw_rule_of_thumb_mhz": 66.75611818213142,
           "angular_spread_deg": 38.32093915885066,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -177,7 +177,7 @@
           "fade_depth_db": 23.85174357129179,
           "delay_spread_ns": 2.8338957309469106,
           "k_factor_db": 3.5998693332988205,
-          "coherence_bw_mhz": 72.35246473574176,
+          "coherence_bw_rule_of_thumb_mhz": 72.35246473574176,
           "angular_spread_deg": 34.362878902055215,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -251,7 +251,7 @@
           "fade_depth_db": 24.288383285079007,
           "delay_spread_ns": 3.258948069163574,
           "k_factor_db": 1.8254750482413473,
-          "coherence_bw_mhz": 62.868093950720926,
+          "coherence_bw_rule_of_thumb_mhz": 62.868093950720926,
           "angular_spread_deg": 41.39494257987908,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -325,7 +325,7 @@
           "fade_depth_db": 24.262533005656174,
           "delay_spread_ns": 3.185879189556981,
           "k_factor_db": 2.128771670295914,
-          "coherence_bw_mhz": 64.26599502722989,
+          "coherence_bw_rule_of_thumb_mhz": 64.26599502722989,
           "angular_spread_deg": 40.26072991553974,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -399,7 +399,7 @@
           "fade_depth_db": 23.276749910708396,
           "delay_spread_ns": 2.5264005903203315,
           "k_factor_db": 4.952469720060162,
-          "coherence_bw_mhz": 82.08901867863372,
+          "coherence_bw_rule_of_thumb_mhz": 82.08901867863372,
           "angular_spread_deg": 28.84012634516224,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -473,7 +473,7 @@
           "fade_depth_db": 23.239205169166215,
           "delay_spread_ns": 2.4838397166881774,
           "k_factor_db": 5.148656009366891,
-          "coherence_bw_mhz": 83.72194031196109,
+          "coherence_bw_rule_of_thumb_mhz": 83.72194031196109,
           "angular_spread_deg": 28.051186795859675,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -547,7 +547,7 @@
           "fade_depth_db": 22.61490555668584,
           "delay_spread_ns": 2.2363125249354145,
           "k_factor_db": 6.368337552817352,
-          "coherence_bw_mhz": 95.23786281581751,
+          "coherence_bw_rule_of_thumb_mhz": 95.23786281581751,
           "angular_spread_deg": 23.271263452717637,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -621,7 +621,7 @@
           "fade_depth_db": 21.662997226331754,
           "delay_spread_ns": 1.9754267611303955,
           "k_factor_db": 7.88875945913439,
-          "coherence_bw_mhz": 113.14071815129492,
+          "coherence_bw_rule_of_thumb_mhz": 113.14071815129492,
           "angular_spread_deg": 17.65270822083952,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -695,7 +695,7 @@
           "fade_depth_db": 20.13295960851292,
           "delay_spread_ns": 1.7876662424263285,
           "k_factor_db": 9.352886067645668,
-          "coherence_bw_mhz": 132.71789819160614,
+          "coherence_bw_rule_of_thumb_mhz": 132.71789819160614,
           "angular_spread_deg": 12.62189854892936,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -769,7 +769,7 @@
           "fade_depth_db": 23.605160029719613,
           "delay_spread_ns": 4.030411184258836,
           "k_factor_db": -1.6203766412942622,
-          "coherence_bw_mhz": 51.67934702266997,
+          "coherence_bw_rule_of_thumb_mhz": 51.67934702266997,
           "angular_spread_deg": 53.17399279687333,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -848,7 +848,7 @@
           "fade_depth_db": 44.64455502248547,
           "delay_spread_ns": 3.145493532644043,
           "k_factor_db": -20.816386181034332,
-          "coherence_bw_mhz": 91.57500412209548,
+          "coherence_bw_rule_of_thumb_mhz": 91.57500412209548,
           "angular_spread_deg": 38.29685260433584,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -922,7 +922,7 @@
           "fade_depth_db": 45.110318792449696,
           "delay_spread_ns": 2.583929219794803,
           "k_factor_db": -13.288195500766982,
-          "coherence_bw_mhz": 86.7872511306948,
+          "coherence_bw_rule_of_thumb_mhz": 86.7872511306948,
           "angular_spread_deg": 30.54582081084544,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -996,7 +996,7 @@
           "fade_depth_db": 45.23729867705984,
           "delay_spread_ns": 2.528274716926264,
           "k_factor_db": -11.987397630453307,
-          "coherence_bw_mhz": 88.49519078152856,
+          "coherence_bw_rule_of_thumb_mhz": 88.49519078152856,
           "angular_spread_deg": 28.72309996209785,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -1070,7 +1070,7 @@
           "fade_depth_db": 45.178908059628895,
           "delay_spread_ns": 2.639076366761775,
           "k_factor_db": -14.368723148090236,
-          "coherence_bw_mhz": 85.858778556122,
+          "coherence_bw_rule_of_thumb_mhz": 85.858778556122,
           "angular_spread_deg": 31.907047212059076,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -1144,7 +1144,7 @@
           "fade_depth_db": 45.139961383514745,
           "delay_spread_ns": 2.618078151732677,
           "k_factor_db": -13.97966091666744,
-          "coherence_bw_mhz": 86.13658759342961,
+          "coherence_bw_rule_of_thumb_mhz": 86.13658759342961,
           "angular_spread_deg": 31.436430022090843,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -1218,7 +1218,7 @@
           "fade_depth_db": 45.064549781432135,
           "delay_spread_ns": 2.4535467129972397,
           "k_factor_db": -10.027167339894612,
-          "coherence_bw_mhz": 91.96329853932791,
+          "coherence_bw_rule_of_thumb_mhz": 91.96329853932791,
           "angular_spread_deg": 25.926074599218985,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -1292,7 +1292,7 @@
           "fade_depth_db": 44.99750008966834,
           "delay_spread_ns": 2.4410819737740543,
           "k_factor_db": -9.680770622735213,
-          "coherence_bw_mhz": 92.64251062487705,
+          "coherence_bw_rule_of_thumb_mhz": 92.64251062487705,
           "angular_spread_deg": 25.438509996230223,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -1366,7 +1366,7 @@
           "fade_depth_db": 45.00077011359611,
           "delay_spread_ns": 2.3924326297449166,
           "k_factor_db": -7.799579040674392,
-          "coherence_bw_mhz": 96.2465329327428,
+          "coherence_bw_rule_of_thumb_mhz": 96.2465329327428,
           "angular_spread_deg": 22.954706148645503,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -1440,7 +1440,7 @@
           "fade_depth_db": 45.48405857060494,
           "delay_spread_ns": 2.492405294246412,
           "k_factor_db": -4.965027159529035,
-          "coherence_bw_mhz": 98.96828727059892,
+          "coherence_bw_rule_of_thumb_mhz": 98.96828727059892,
           "angular_spread_deg": 20.39204999531785,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -1514,7 +1514,7 @@
           "fade_depth_db": 51.08599849182991,
           "delay_spread_ns": 3.073559274578465,
           "k_factor_db": -0.03911431639237802,
-          "coherence_bw_mhz": 97.0329784092583,
+          "coherence_bw_rule_of_thumb_mhz": 97.0329784092583,
           "angular_spread_deg": 19.128821115521585,
           "n_paths": 112,
           "rss_profile_dbm": [
@@ -1588,7 +1588,7 @@
           "fade_depth_db": 44.338066935100784,
           "delay_spread_ns": 2.72850016577284,
           "k_factor_db": -15.80875088015229,
-          "coherence_bw_mhz": 85.44837594960376,
+          "coherence_bw_rule_of_thumb_mhz": 85.44837594960376,
           "angular_spread_deg": 33.667194081662984,
           "n_paths": 112,
           "rss_profile_dbm": [

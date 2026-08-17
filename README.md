@@ -27,8 +27,8 @@ RF_Simulator/
     scenes.py                rooms, obstacles, robot trajectories
     metrics.py               channel metrics, SSIM / PSNR, gradient checks
     optimize.py              digital-twin optimisation loop                 (Eq. 23, 24)
-  experiments/               the four studies described below
-  tests/test_rfdt.py         27 physics and differentiability regression tests
+  experiments/               the five studies described below
+  tests/test_rfdt.py         29 physics and differentiability regression tests
   results/                   figures, JSON and CSV written by the experiments
   run_all.py                 run the tests then every experiment
 ```
@@ -37,7 +37,7 @@ RF_Simulator/
 
 ```bash
 pip install -r requirements.txt      # torch >= 2.5, numpy, matplotlib
-python3 run_all.py                   # tests, then all four experiments (~10 min)
+python3 run_all.py                   # tests, then all five experiments (~13 min)
 python3 run_all.py 2                 # just the material sweep
 python3 tests/test_rfdt.py           # regression tests alone
 ```
@@ -146,7 +146,7 @@ as outside UTD validity.
 
 ## 5. Validation
 
-`python3 tests/test_rfdt.py` runs 27 checks; all pass. The substantive ones:
+`python3 tests/test_rfdt.py` runs 29 checks; all pass. The substantive ones:
 
 | Check | Result |
 |---|---|
@@ -159,6 +159,8 @@ as outside UTD validity.
 | Candidate pruning is lossless | identical to < 1e-9 dB |
 | Conductor and grazing-incidence reflection | `Gamma -> -1` in both |
 | Radar range profile peak | within one range cell |
+| Two-ray notch spacing vs `c / dL` | 0.06 % error |
+| Group delay of a single path vs `L / c` | agrees to 1e-15 s |
 
 The forward model is therefore checked against closed-form electromagnetics,
 not only against itself.
@@ -199,7 +201,7 @@ At 5 GHz the channel changes monotonically with reflectivity:
 
 Rows are sorted by reflectivity, most reflective first.
 
-| Wall material | Reflectivity, normal incidence | Route-mean RSS | RMS delay spread | K-factor | Angular spread | Coherence BW |
+| Wall material | Reflectivity, normal incidence | Route-mean RSS | RMS delay spread | K-factor | Angular spread | Coherence BW (est.) |
 |---|---|---|---|---|---|---|
 | Metal | -0.00 dB | -37.43 dBm | 4.38 ns | -3.61 dB | 59.2 deg | 48 MHz |
 | Human body (approx) | -2.30 dB | -38.77 dBm | 4.03 ns | -1.62 dB | 53.2 deg | 52 MHz |
@@ -214,7 +216,10 @@ Rows are sorted by reflectivity, most reflective first.
 | Foam board (approx) | -36.73 dB | -41.55 dBm | 1.79 ns | 9.35 dB | 12.6 deg | 133 MHz |
 
 Delay spread, K-factor, angular spread and coherence bandwidth are each
-strictly monotone in the Fresnel coefficient across all eleven materials. RSS
+strictly monotone in the Fresnel coefficient across all eleven materials. The
+coherence bandwidth column is the standard `1/(5 sigma_tau)` estimate from
+delay spread, not a measurement; experiment 5 measures it directly and shows
+where that estimate holds and where it does not. RSS
 is monotone with **one exception**: foam board comes out 0.09 dB above ceiling
 board, an inversion far smaller than the 5.7 dB standard deviation of RSS along
 the route, so it should be read as the two being indistinguishable rather than
@@ -310,6 +315,53 @@ reasonable initialisation.
 Recovering the wall distance at all depends on the simulator being
 differentiable with respect to geometry, which experiment 1 shows the
 conventional visibility test is not.
+
+### Experiment 5: channel frequency response, amplitude and phase
+
+The frequency domain, which is what a wideband receiver actually estimates:
+`H(f) = sum_i alpha_i exp(-2 pi j f tau_i)`.
+
+**Validation against closed form.** One transmitter, one receiver, one
+conducting reflector. A single reflector turns a smooth channel into a comb of
+notches, and their spacing is predicted analytically by `c / dL`:
+
+| Quantity | Analytic | Simulated | Error |
+|---|---|---|---|
+| Notch spacing (path difference 1.0804 m) | 277.49 MHz | 277.67 MHz | 0.06 % |
+| Direct-path slope across 4 to 6 GHz (1/f spreading) | 3.522 dB | 3.522 dB | 0.00 % |
+| Direct-path group delay | 10.5482 ns | 10.5482 ns | agrees to 1e-15 s |
+| Notches in the direct-only response | 0 | 0 | |
+
+The deepest notch sits 19.9 dB below the peak. So a single reflector is enough
+to put a 20 dB hole in a wideband channel, and the phase becomes non-linear
+around each notch, which is what distorts a wideband signal.
+
+**Frequency selectivity versus material**, in the furnished room at one
+receiver position over 4.5 to 5.5 GHz:
+
+| Wall material | Fading depth | RMS delay spread | Coherence BW, **measured** | `1/(5 sigma_tau)` estimate | Ratio |
+|---|---|---|---|---|---|
+| Metal | 31.7 dB | 3.79 ns | 55 MHz | 53 MHz | 1.04 |
+| Concrete | 14.9 dB | 2.49 ns | 315 MHz | 80 MHz | 3.92 |
+| Foam board | 7.7 dB | 1.44 ns | 485 MHz | 139 MHz | 3.49 |
+
+**This is a correction to experiment 2, not a confirmation of it.** The
+`1/(5 sigma_tau)` rule of thumb is accurate to 4 % with metal walls, where
+multipath is dense, but understates the true coherence bandwidth by roughly a
+factor of four for concrete and foam. The rule assumes a rich scattering
+environment; a weakly reflecting room does not provide one. Experiment 2's
+coherence bandwidth column is therefore labelled as an estimate, and the caveat
+is documented at the source in `rfdt/metrics.py`. The ordering across materials
+still holds under direct measurement, but the absolute values do not.
+
+**One further honest note.** Path delays are pure geometry and so are exactly
+frequency independent, but path amplitudes are not: free-space spreading falls
+as 1/f and the Fresnel coefficients vary with frequency. The scene is therefore
+re-traced at every frequency point rather than traced once and extrapolated.
+The commonly used narrowband shortcut, tracing once at band centre and applying
+only the delay phase, departs from the re-traced result by up to **3.31 dB**
+over a 2 GHz span. That is the cost of the shortcut, measured rather than
+assumed.
 
 ---
 

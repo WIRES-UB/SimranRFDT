@@ -8,7 +8,11 @@ actually experience along the route:
 
   * received power (RSS) and its variability,
   * RMS delay spread and Rice K-factor,
-  * coherence bandwidth and angular spread,
+  * coherence bandwidth and angular spread.  The coherence bandwidth here is
+    the standard ``1/(5 sigma_tau)`` estimate from the delay spread, not a
+    direct measurement; experiment 5 measures it from the frequency
+    correlation of H(f) and finds the estimate is close in rich multipath but
+    understates it by roughly a factor of four when multipath is sparse,
   * the deterministic reflection and penetration characteristics of the
     material itself, so the channel results can be read against the physics.
 
@@ -134,7 +138,7 @@ def run_route(material, f_centre, traj, cfg):
         "fade_depth_db": float(rss_avg.max() - rss_avg.min()),
         "delay_spread_ns": float(torch.stack(ds).mean()),
         "k_factor_db": float(torch.stack(kf).mean()),
-        "coherence_bw_mhz": float(torch.stack(cb).mean()),
+        "coherence_bw_rule_of_thumb_mhz": float(torch.stack(cb).mean()),
         "angular_spread_deg": float(torch.stack(asp).mean()),
         "n_paths": int(np.mean(npath)),
         "rss_profile_dbm": rss_avg.tolist(),
@@ -157,7 +161,7 @@ def main():
     for band, f_c in BANDS.items():
         print(f"\n=== {band} ===")
         print(f"{'material':15s} {'RSS[dBm]':>9s} {'sd':>6s} {'fade':>6s} "
-              f"{'tau[ns]':>8s} {'K[dB]':>7s} {'Bc[MHz]':>8s} {'AS[deg]':>8s} "
+              f"{'tau[ns]':>8s} {'K[dB]':>7s} {'Bc~[MHz]':>8s} {'AS[deg]':>8s} "
               f"{'|G|0[dB]':>9s} {'pen10cm':>8s}")
         out["bands"][band] = {"frequency_hz": f_c, "materials": {}}
         for name in SWEEP:
@@ -167,7 +171,8 @@ def main():
             out["bands"][band]["materials"][name] = rec
             print(f"{name:15s} {rec['rss_mean_dbm']:9.2f} {rec['rss_std_db']:6.2f} "
                   f"{rec['fade_depth_db']:6.1f} {rec['delay_spread_ns']:8.2f} "
-                  f"{rec['k_factor_db']:7.2f} {rec['coherence_bw_mhz']:8.1f} "
+                  f"{rec['k_factor_db']:7.2f} "
+                  f"{rec['coherence_bw_rule_of_thumb_mhz']:8.1f} "
                   f"{rec['angular_spread_deg']:8.1f} "
                   f"{rec['reflection_db_normal']:9.2f} "
                   f"{rec['penetration_loss_db_10cm']:8.2f}"
@@ -194,7 +199,7 @@ def _write_csv(out):
             "sigma_S_per_m", "loss_tangent", "reflection_db_normal",
             "reflection_db_45deg", "penetration_loss_db_10cm", "rss_mean_dbm",
             "rss_std_db", "fade_depth_db", "delay_spread_ns", "k_factor_db",
-            "coherence_bw_mhz", "angular_spread_deg", "n_paths"]
+            "coherence_bw_rule_of_thumb_mhz", "angular_spread_deg", "n_paths"]
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(cols)

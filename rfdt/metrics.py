@@ -77,6 +77,15 @@ def coherence_bandwidth(delays: torch.Tensor, amps: torch.Tensor,
 
     Uses the standard rules of thumb ``B_c ~ 1/(5 sigma_tau)`` at 0.5
     correlation and ``1/(50 sigma_tau)`` at 0.9.
+
+    This is an *estimate*, not a measurement, and its accuracy depends on the
+    channel.  Experiment 5 measures coherence bandwidth directly from the
+    frequency correlation of H(f) and compares: with metal walls, where
+    multipath is rich, the rule of thumb lands within a few per cent, but with
+    concrete or foam walls it understates the true value by roughly a factor
+    of four, because the rule assumes a dense scattering environment that a
+    weakly reflecting room does not provide.  Prefer the direct measurement
+    when the answer matters.
     """
     sigma = rms_delay_spread(delays, amps).clamp_min(1e-15)
     factor = 5.0 if correlation <= 0.5 else 50.0
@@ -116,7 +125,8 @@ def channel_summary(paths, tx_power_dbm: float, noise_floor_dbm: float,
         "delay_spread_ns": rms_delay_spread(paths.delay, paths.gain) * 1e9,
         "mean_excess_delay_ns": mean_excess_delay(paths.delay, paths.gain) * 1e9,
         "k_factor_db": rice_k_factor_db(paths.gain),
-        "coherence_bw_mhz": coherence_bandwidth(paths.delay, paths.gain) / 1e6,
+        "coherence_bw_rule_of_thumb_mhz":
+            coherence_bandwidth(paths.delay, paths.gain) / 1e6,
         "angular_spread_deg": angular_spread(paths.arr_dir, paths.gain) * 180.0 / np.pi,
         "n_paths": torch.tensor(float(paths.n_paths())),
     }
