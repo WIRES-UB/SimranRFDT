@@ -6,7 +6,3 @@
 torch>=2.5
 numpy>=1.24
 matplotlib>=3.6
-
-# optional, only needed to build the PowerPoint deck
-# (experiments/make_ppt.py); the PNG slides need nothing extra
-python-pptx>=1.0

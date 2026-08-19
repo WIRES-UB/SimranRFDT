@@ -10,3 +10,9 @@ venv/
 
 # Scratch output
 *.log
+
+# Presentation material, kept local rather than in the repo
+experiments/make_slides.py
+experiments/make_ppt.py
+results/slides/
+*.pptx
