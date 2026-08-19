@@ -71,6 +71,8 @@ def main() -> int:
                          f"{sorted(EXPERIMENTS)} (default: all)")
     ap.add_argument("--skip-tests", action="store_true",
                     help="do not run the regression suite first")
+    ap.add_argument("--slides", action="store_true",
+                    help="also generate presentation slides in results/slides")
     args = ap.parse_args()
 
     unknown = [n for n in args.experiments if n not in EXPERIMENTS]
@@ -89,6 +91,13 @@ def main() -> int:
 
     for n in (args.experiments or sorted(EXPERIMENTS)):
         run_experiment(n)
+
+    if args.slides:
+        print("\n" + "=" * 78)
+        print("Presentation slides")
+        print("=" * 78)
+        sys.path.insert(0, os.path.join(HERE, "experiments"))
+        __import__("make_slides").main()
 
     print(f"\nAll done in {time.time() - t0:.0f} s. "
           f"Results are in {os.path.join(HERE, 'results')}")

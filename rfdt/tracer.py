@@ -104,6 +104,10 @@ class Paths:
     arr_dir: torch.Tensor
     order: torch.Tensor
     kind: List[str] = field(default_factory=list)
+    #: geometry of each path as ``(R, n_nodes, 3)``: transmitter, every
+    #: interaction point in order, then receiver.  Kept so a path can be drawn
+    #: or inspected, not only summed.
+    nodes: List[torch.Tensor] = field(default_factory=list)
 
     def field(self) -> torch.Tensor:
         """Coherent sum over paths, Eq. 1.
@@ -148,7 +152,8 @@ class Paths:
         return Paths(self.gain[..., keep], self.length[..., keep],
                      self.delay[..., keep], self.dep_dir[..., keep, :],
                      self.arr_dir[..., keep, :], self.order[keep],
-                     [self.kind[i] for i in keep])
+                     [self.kind[i] for i in keep],
+                     [self.nodes[i] for i in keep] if self.nodes else [])
 
 
 def _cat_paths(items: List[Paths]) -> Paths:
@@ -164,6 +169,7 @@ def _cat_paths(items: List[Paths]) -> Paths:
         torch.cat([p.arr_dir for p in items], dim=-2),
         torch.cat([p.order for p in items], dim=0),
         [k for p in items for k in p.kind],
+        [n for p in items for n in p.nodes],
     )
 
 
@@ -415,7 +421,8 @@ class RFDTracer:
         gain = w * amp.to(CDTYPE) * torch.exp(-1j * (k * L).to(CDTYPE))
         return Paths(gain.unsqueeze(-1), L.unsqueeze(-1), (L / C0).unsqueeze(-1),
                      u.unsqueeze(-2), u.unsqueeze(-2),
-                     torch.zeros(1, dtype=torch.long), ["los"])
+                     torch.zeros(1, dtype=torch.long), ["los"],
+                     [torch.stack([p_tx, rx_pos], dim=-2)])
 
     def _specular(self, tx: Transmitter, rx_pos: torch.Tensor, rx: Receiver,
                   seq: Tuple[int, ...], vertices=None, mat_overrides=None) -> Paths:
@@ -483,7 +490,8 @@ class RFDTracer:
                      (L_tot / C0).unsqueeze(-1), dirs[0].unsqueeze(-2),
                      dirs[-1].unsqueeze(-2),
                      torch.full((1,), len(seq), dtype=torch.long),
-                     ["refl" + "".join(f"-{s}" for s in seq)])
+                     ["refl" + "".join(f"-{s}" for s in seq)],
+                     [torch.stack(nodes, dim=-2)])
 
     def _diffraction(self, tx: Transmitter, rx_pos: torch.Tensor, rx: Receiver,
                      wedge: Wedge, vertices=None, mat_overrides=None) -> Paths:
@@ -595,7 +603,8 @@ class RFDTracer:
         return Paths(gain.unsqueeze(-1), L_tot.unsqueeze(-1),
                      (L_tot / C0).unsqueeze(-1), u_in.unsqueeze(-2),
                      u_out.unsqueeze(-2), torch.ones(1, dtype=torch.long),
-                     [f"diff-{wedge.v0}_{wedge.v1}"])
+                     [f"diff-{wedge.v0}_{wedge.v1}"],
+                     [torch.stack([p_tx, p_d, rx_pos], dim=-2)])
 
     # ------------------------------------------------------------------
     # public API
