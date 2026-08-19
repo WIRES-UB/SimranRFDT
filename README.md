@@ -29,9 +29,11 @@ RF_Simulator/
     optimize.py              digital-twin optimisation loop                 (Eq. 23, 24)
   experiments/               the five studies described below
     make_slides.py           generates presentation slides from the simulator
+    make_ppt.py              assembles those slides into a .pptx deck
   tests/test_rfdt.py         29 physics and differentiability regression tests
   results/                   figures, JSON and CSV written by the experiments
     slides/                  16:9 presentation slides
+    RFDT_indoor_rf_simulator.pptx   the assembled deck
   run_all.py                 run the tests then every experiment
 ```
 
@@ -43,6 +45,7 @@ python3 run_all.py                   # tests, then all five experiments (~13 min
 python3 run_all.py 2                 # just the material sweep
 python3 tests/test_rfdt.py           # regression tests alone
 python3 experiments/make_slides.py   # presentation slides only (~1 min)
+python3 experiments/make_ppt.py      # assemble them into a .pptx deck
 ```
 
 `torch >= 2.5` is required if you have `numpy >= 2`: earlier torch wheels are
@@ -381,6 +384,13 @@ the tracer; nothing is a sketch.
 | `B5_summary` | what each added path does to selectivity, delay spread and power |
 | `D1_method_of_images` | how the second path is constructed |
 | `D2_higher_order` | double bounce and diffraction |
+
+`python3 experiments/make_ppt.py` assembles those images, plus the two
+frequency-domain and material figures, into
+`results/RFDT_indoor_rf_simulator.pptx`: 14 slides at exactly 16:9, every one
+carrying speaker notes with the numbers being quoted. It regenerates any
+missing slide images itself. This step needs `python-pptx`, which the PNG
+slides do not.
 
 The `B` sequence is the explanatory core. Building the same link up one path at
 a time gives a clean result:
