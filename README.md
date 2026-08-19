@@ -29,6 +29,7 @@ RF_Simulator/
     optimize.py              digital-twin optimisation loop                 (Eq. 23, 24)
   experiments/               the five studies described below
   tests/test_rfdt.py         29 physics and differentiability regression tests
+  dloc/                      validation against the DLoc measured dataset
   results/                   figures, JSON and CSV written by the experiments
   run_all.py                 run the tests then every experiment
 ```

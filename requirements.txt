@@ -6,3 +6,7 @@
 torch>=2.5
 numpy>=1.24
 matplotlib>=3.6
+
+# needed only for the DLoc comparison (dloc/), which reads MATLAB v7.3
+# measurement files; the simulator itself does not require it
+h5py>=3.0
