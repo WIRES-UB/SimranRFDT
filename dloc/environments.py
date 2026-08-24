@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from rfdt.geometry import Mesh, box, quad                             # noqa: E402
 from rfdt.materials import get_material                               # noqa: E402
 
+import floorplan as fp                                                # noqa: E402
 from dataset import DLocMeasurement, environment_of                   # noqa: E402
 
 #: Wall height where the dataset does not record one.  Typical for the lab
@@ -152,6 +153,150 @@ def _shell(x0, x1, y0, y1, z1, wall, floor, ceiling) -> Mesh:
             raise ValueError(f"surface {s.group} has an outward normal; the "
                              "room shell must face inwards")
     return mesh
+
+
+def shell_from_polygon(poly: np.ndarray, height: float, wall: str,
+                       floor: str, ceiling: str,
+                       wall_materials: Optional[Dict[int, str]] = None) -> Mesh:
+    """Build a room shell from an arbitrary floor-plan outline.
+
+    ``poly`` is an ``(n, 2)`` counter-clockwise polygon in metres.  Each edge
+    becomes one vertical wall facet, so a wall can be given its own material by
+    index through ``wall_materials``.  Floor and ceiling are triangulated; the
+    mesh merges the coplanar triangles back into a single facet each, so the
+    tracer sees one floor rather than dozens of slivers.
+
+    Winding matters and is not cosmetic.  For a counter-clockwise outline the
+    interior lies to the left of each edge, and the vertex order used below
+    puts the wall normal on that side.  A clockwise polygon would build the
+    room inside out, with every wall facing away from the space, which is
+    silent rather than an error, so the result is asserted at the end.
+    """
+    poly = np.asarray(poly, dtype=float)
+    n = len(poly)
+    if n < 3:
+        raise ValueError("a floor plan needs at least 3 corners")
+    quads, mats, groups = [], [], []
+
+    for i in range(n):
+        a, b = poly[i], poly[(i + 1) % n]
+        # (a,0) -> (a,h) -> (b,h) -> (b,0) puts the normal to the left of a->b
+        quads.append(quad((a[0], a[1], 0.0), (a[0], a[1], height),
+                          (b[0], b[1], height), (b[0], b[1], 0.0)))
+        mats.append((wall_materials or {}).get(i, wall))
+        groups.append(f"wall{i:03d}")
+
+    tris = fp.triangulate(poly)
+    if not tris:
+        raise ValueError("floor plan could not be triangulated")
+    verts: List[List[float]] = []
+    faces: List[List[int]] = []
+    fmats: List[str] = []
+    fgroups: List[str] = []
+    for level, mat, name, flip in ((0.0, floor, "floor", False),
+                                   (height, ceiling, "ceiling", True)):
+        base = len(verts)
+        verts.extend([[float(p[0]), float(p[1]), level] for p in poly])
+        for (a, b, c) in tris:
+            # the ceiling is wound the other way so its normal points down
+            tri = (base + a, base + c, base + b) if flip else (base + a, base + b, base + c)
+            faces.append(list(tri))
+            fmats.append(mat)
+            fgroups.append(f"{name}.{len(faces)}")
+
+    mesh = Mesh.from_quads(quads, mats, groups)
+    caps = Mesh(torch.tensor(verts, dtype=torch.float64), np.asarray(faces),
+                fmats, fgroups)
+    mesh = mesh.merged(caps).weld()
+
+    _assert_faces_inward(mesh, poly, height)
+    return mesh
+
+
+def _point_in_polygon(pt: np.ndarray, poly: np.ndarray) -> bool:
+    """Ray-casting point-in-polygon test, exact for non-convex outlines."""
+    x, y = float(pt[0]), float(pt[1])
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x0, y0 = poly[i]
+        x1, y1 = poly[(i + 1) % n]
+        if (y0 > y) != (y1 > y):
+            xint = x0 + (y - y0) * (x1 - x0) / (y1 - y0)
+            if x < xint:
+                inside = not inside
+    return inside
+
+
+def _assert_faces_inward(mesh: Mesh, poly: np.ndarray, height: float) -> None:
+    """Check every surface reflects into the room, and say which if not.
+
+    Each wall is tested *locally*: step a short way along its own normal from
+    its own midpoint, and require that point to be inside the floor plan.  A
+    single interior reference point does not work for a non-convex outline,
+    where the centroid can sit on, or the far side of, a reflex wall.
+    """
+    scale = max(float(np.ptp(poly[:, 0])), float(np.ptp(poly[:, 1])), 1.0)
+    step = 1e-3 * scale
+    bad = []
+    for s_ in mesh.surfaces():
+        tri = mesh.tri()[s_.tri0].detach().numpy()
+        nrm = np.cross(tri[1] - tri[0], tri[2] - tri[0])
+        norm = np.linalg.norm(nrm)
+        if norm < 1e-12:
+            bad.append(f"{s_.group} (degenerate)")
+            continue
+        nrm = nrm / norm
+        if abs(nrm[2]) > 0.9:                      # floor or ceiling
+            want_up = s_.group.startswith("floor")
+            if (nrm[2] > 0) != want_up:
+                bad.append(s_.group)
+            continue
+        centre = np.array([float(np.mean([v[0] for v in tri])),
+                           float(np.mean([v[1] for v in tri]))])
+        if not _point_in_polygon(centre + nrm[:2] * step, poly):
+            bad.append(s_.group)
+    if bad:
+        raise ValueError(
+            f"{len(bad)} surface(s) face out of the room: {bad[:6]}. "
+            "The floor-plan polygon must be wound counter-clockwise.")
+
+
+def assign_wall_material_near(mesh: Mesh, poly: np.ndarray,
+                              anchors: Sequence[Sequence[float]],
+                              material: str, radius: float) -> List[int]:
+    """Give the ``material`` to every wall segment near any anchor point.
+
+    Features like the plasma screens are not a whole boundary wall: they cover
+    a stretch of it, and in Jacobs they appear on two opposite sides.  A whole
+    wall cannot express that, but a run of segments from the floor-plan outline
+    can.  Returns the indices assigned, for the run log.
+    """
+    n = len(poly)
+    hit = []
+    for i in range(n):
+        mid = 0.5 * (np.asarray(poly[i]) + np.asarray(poly[(i + 1) % n]))
+        for a in anchors:
+            if float(np.linalg.norm(mid - np.asarray(a, dtype=float))) <= radius:
+                mesh.set_group_material(f"wall{i:03d}", material)
+                hit.append(i)
+                break
+    return hit
+
+
+def add_column(mesh: Mesh, centre: Sequence[float], size: Sequence[float],
+               material: str, group: str = "blockage") -> Mesh:
+    """Add a free-standing column or short partition to a scene.
+
+    The DLoc photograph labels the structure beside AP4 as a "Blockage": a
+    narrow vertical element the access point sits behind, not a boundary wall.
+    Modelling it as a whole wall would shadow far more of the room than it
+    really does, so it goes in as its own solid.
+    """
+    cx, cy = float(centre[0]), float(centre[1])
+    cz = float(size[2]) / 2.0
+    return mesh.merged(box((cx, cy, cz), tuple(float(v) for v in size),
+                           material, group)).weld()
 
 
 def build_scene(meas: DLocMeasurement,
