@@ -221,19 +221,30 @@ def _plot(out, traj):
     def grouped(ax, key, xlabel, title, tight=False):
         """Horizontal grouped bars of one metric for both bands.
 
-        ``tight`` clips the axis to the data range instead of anchoring it at
-        zero.  For quantities like RSS, whose values sit tens of dB from zero
-        but differ by a few dB, a zero-anchored axis hides the whole effect.
+        ``tight`` switches to markers on a stem rather than bars.  A bar
+        encodes value by *length*, which only works when the axis starts at
+        zero.  Received power sits tens of dB from zero but differs by a few,
+        so a zero-anchored axis hides the effect entirely, while a clipped
+        axis leaves bars whose lengths mean nothing.  Markers avoid both: the
+        position carries the value and no length is implied.
         """
         allv = []
         for i, band in enumerate(bands):
             vals = [out["bands"][band]["materials"][m][key] for m in SWEEP]
             allv += vals
-            ax.barh(y + (i - 0.5) * 0.38, vals, height=0.36,
-                    color=colors[band], label=band, alpha=0.9)
+            yy = y + (i - 0.5) * 0.38
+            if tight:
+                lo_v = min(v for v in allv)
+                ax.hlines(yy, lo_v, vals, color=colors[band], lw=1.0,
+                          alpha=0.45)
+                ax.plot(vals, yy, "o", color=colors[band], ms=6.5,
+                        label=band, zorder=3)
+            else:
+                ax.barh(yy, vals, height=0.36, color=colors[band], label=band,
+                        alpha=0.9)
         if tight:
             lo, hi = min(allv), max(allv)
-            pad = 0.08 * (hi - lo) if hi > lo else 1.0
+            pad = 0.10 * (hi - lo) if hi > lo else 1.0
             ax.set_xlim(lo - pad, hi + pad)
         ax.set_yticks(y)
         ax.set_yticklabels(labels, fontsize=8)
@@ -244,7 +255,9 @@ def _plot(out, traj):
         ax.legend(fontsize=8, frameon=False)
 
     grouped(fig.add_subplot(gs[0, 0]), "rss_mean_dbm",
-            "route-mean RSS [dBm]", "Received power along the route", tight=True)
+            "route-mean RSS [dBm]",
+            "Received power along the route\nmarkers, not bars: axis does not start at zero",
+            tight=True)
     grouped(fig.add_subplot(gs[0, 1]), "delay_spread_ns",
             "RMS delay spread [ns]", "Multipath richness")
     grouped(fig.add_subplot(gs[0, 2]), "k_factor_db",
@@ -263,7 +276,13 @@ def _plot(out, traj):
     ax.set_xlabel("incidence angle from normal [deg]")
     ax.set_ylabel(r"$20\log_{10}|\Gamma_\perp|$ [dB]")
     ax.set_title("Fresnel reflectivity at 5 GHz (Eq. 56)", fontsize=10.5)
-    ax.set_ylim(-30, 1)
+    # the axis must reach the least reflective material's normal-incidence
+    # value, or that curve enters from off-scale and the panel understates
+    # exactly the contrast it exists to show
+    floor = min(float(20 * np.log10(reflection_coefficient(
+        5e9, torch.tensor(1.0, dtype=torch.float64), get_material(m), "perp"
+    ).abs() + 1e-12)) for m in SWEEP)
+    ax.set_ylim(np.floor((floor - 2) / 5) * 5, 1)
     ax.grid(alpha=0.25)
     ax.legend(fontsize=6.5, ncol=2, frameon=False, loc="lower right")
 
@@ -282,19 +301,45 @@ def _plot(out, traj):
 
     # penetration loss, log scale over many decades
     ax = fig.add_subplot(gs[1, 2])
+    # A good conductor is opaque: its loss is infinite, not a large number.
+    # Drawing a clipped bar would present a value that was never computed, so
+    # infinite entries are drawn hatched to the axis edge and labelled.
+    finite = [v for band in bands for m in SWEEP
+              if np.isfinite(v := out["bands"][band]["materials"][m]
+                             ["penetration_loss_db_10cm"])]
+    # put the cap a full decade past the largest finite value, so an opaque
+    # bar running the full width is unmistakably different from a large but
+    # finite one; human body at 883 dB otherwise looks the same as metal
+    cap = 10 ** (np.ceil(np.log10(max(finite))) + 1)
+    infinite_rows = set()
     for i, band in enumerate(bands):
-        vals = [min(out["bands"][band]["materials"][m]["penetration_loss_db_10cm"],
-                    1e4) for m in SWEEP]
-        ax.barh(y + (i - 0.5) * 0.38, vals, height=0.36, color=colors[band],
-                label=band, alpha=0.9)
+        raw = [out["bands"][band]["materials"][m]["penetration_loss_db_10cm"]
+               for m in SWEEP]
+        vals = [cap if not np.isfinite(v) else v for v in raw]
+        hatch = ["//" if not np.isfinite(v) else "" for v in raw]
+        for j, (v, h) in enumerate(zip(vals, hatch)):
+            ax.barh(y[j] + (i - 0.5) * 0.38, v, height=0.36,
+                    color=colors[band], alpha=0.9, hatch=h,
+                    edgecolor="white" if h else "none", linewidth=0.0)
+            if h:
+                infinite_rows.add(j)
+    for j in sorted(infinite_rows):
+        ax.annotate("opaque, loss is infinite", (cap, y[j] + 0.55),
+                    textcoords="offset points", xytext=(-6, 0), ha="right",
+                    va="center", fontsize=8, color="#333333")
     ax.set_yticks(y)
     ax.set_yticklabels(labels, fontsize=8)
     ax.invert_yaxis()
     ax.set_xscale("symlog", linthresh=1.0)
+    ax.set_xlim(0, cap)
     ax.set_xlabel("one-way loss through 10 cm [dB], log scale")
-    ax.set_title("Penetration loss (Eq. 58, 59)", fontsize=10.5)
+    ax.set_title("Penetration loss (Eq. 58, 59)\nhatched = opaque, not a value",
+                 fontsize=10.5)
     ax.grid(alpha=0.25, axis="x")
-    ax.legend(fontsize=8, frameon=False)
+    handles = [plt.Rectangle((0, 0), 1, 1, color=colors[b], alpha=0.9)
+               for b in bands]
+    ax.legend(handles, list(bands), fontsize=8, frameon=True, framealpha=0.9,
+              loc="center right")
 
     fig.suptitle("Experiment 2: indoor robot channel versus wall material "
                  "(RFDT, order 2 + diffraction)", fontsize=13)
