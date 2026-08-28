@@ -151,20 +151,26 @@ Bottom right is where I correct my own earlier numbers. I had been reporting coh
 
 SAY THAT LAST PART OUT LOUD. Owning it is stronger than hiding it."""),
 
- (11, "exp2_material_sweep.png", "Material sweep",
-  """This is the material result. Eleven materials from the international standard database, with the robot driving the full route.
+ (11, "exp6_metal_vs_foam.png", "Metal against foam",
+  """Now the material result, and I have stripped it down to the two extremes so the mechanism is visible.
 
-Bottom left is the cause. That is just the reflectivity of each material against angle. Metal reflects everything, foam reflects almost nothing, everything else in between.
+Metal walls against foam walls. Same room, same route, same transmitter. The only thing different is how much the walls send back, and that differs by thirty six decibels, which is a factor of about four thousand in power. Two rooms could hardly be more different.
 
-The top row is the effect. And the surprise is top left. At five gigahertz the received power barely changes across all eleven materials, only about four decibels, for the reason we just saw.
+Panel one is the cause, just how reflective each one is against angle.
 
-But the middle and right panels show the channel shape changing enormously, and in exact order of reflectivity. A metal room behaves like a tiled bathroom, echoes louder than the direct signal. A foam room behaves like a recording studio.
+POINT AT PANEL FOUR, bottom left. That is received power as the robot drives, and the two lines nearly lie on top of each other. Four decibels apart on average. Between metal and foam.
 
-Bottom middle is the practical one. Signal strength as the robot drives, four materials, and the lines basically move together. The big dips are the robot going behind the partition. Twenty five decibels of variation along the route against four decibels between materials, so where the robot is matters far more than what the walls are made of.
+The reason is that most of your signal comes straight from the access point to the robot and never touches a wall at all. So changing the walls barely moves the total.
 
-Bottom right is the other side of it, energy going through a wall rather than bouncing off. Concrete costs twelve decibels at five gigahertz but eighty one at sixty. That gap is essentially why millimetre wave does not work through walls.
+Now panel five, which is what actually does change. Delay spread more than doubles. Angular spread goes from thirteen degrees to fifty nine. And the Rice K factor, which is the direct signal measured against everything else, flips sign. Metal is negative, meaning the echoes together are louder than the signal that came straight to you. Foam is plus nine, meaning the direct signal wins by a factor of ten.
 
-IF ASKED which material is best, it depends what you are optimising. Reflective walls help coverage in shadowed areas but wreck delay spread. There is no single winner."""),
+THE TAKEAWAY LINE. Same power reading, completely different channel. One is a tiled bathroom, the other is a recording studio.
+
+Panels two and three show the same thing from the inside. What arrives and when, and what the channel looks like across frequency.
+
+And panel six is where it flips. At sixty gigahertz the gap opens to nearly sixteen decibels and metal becomes the better room, because the partition kills the direct path and bounced signals are the only thing still reaching the far side.
+
+IF ASKED whether this holds for other materials, yes. I ran eleven from the standard database and delay spread, K factor and angular spread are all strictly monotone in reflectivity, no exceptions. This slide is the two ends of that."""),
 
  (12, "slides/D1_method_of_images.png", "How the second path is found",
   """Two slides on how this works underneath, because the method is the contribution here, not the numbers.
