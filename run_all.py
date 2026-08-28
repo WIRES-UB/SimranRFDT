@@ -1,4 +1,4 @@
-"""Run the full RFDT study: tests first, then all five experiments.
+"""Run the full RFDT study: tests first, then all six experiments.
 
 Usage::
 
@@ -34,6 +34,8 @@ EXPERIMENTS = {
         "recover material and geometry from RF measurements (Sec. 5.2)"),
     5: ("exp5_frequency_response",
         "channel frequency response: amplitude, phase and coherence bandwidth"),
+    6: ("exp6_metal_vs_foam",
+        "metal against foam head to head, the two extremes of experiment 2"),
 }
 
 

@@ -27,7 +27,7 @@ RF_Simulator/
     scenes.py                rooms, obstacles, robot trajectories
     metrics.py               channel metrics, SSIM / PSNR, gradient checks
     optimize.py              digital-twin optimisation loop                 (Eq. 23, 24)
-  experiments/               the five studies described below
+  experiments/               the six studies described below
   tests/test_rfdt.py         29 physics and differentiability regression tests
   dloc/                      validation against the DLoc measured dataset
   results/                   figures, JSON and CSV written by the experiments
@@ -38,7 +38,7 @@ RF_Simulator/
 
 ```bash
 pip install -r requirements.txt      # torch >= 2.5, numpy, matplotlib
-python3 run_all.py                   # tests, then all five experiments (~13 min)
+python3 run_all.py                   # tests, then all six experiments (~14 min)
 python3 run_all.py 2                 # just the material sweep
 python3 tests/test_rfdt.py           # regression tests alone
 ```
@@ -363,6 +363,37 @@ The commonly used narrowband shortcut, tracing once at band centre and applying
 only the delay phase, departs from the re-traced result by up to **3.31 dB**
 over a 2 GHz span. That is the cost of the shortcut, measured rather than
 assumed.
+
+### Experiment 6: metal against foam, head to head
+
+Experiment 2 shows the trend across eleven materials. This one drops everything
+but the two extremes, because the contrast is what makes the mechanism visible.
+Same room, same route, same transmitter; only the walls differ, by 36.7 dB of
+reflectivity, a factor of about 4,300 in power.
+
+| Quantity, 5 GHz | Metal | Foam board | Difference |
+|---|---|---|---|
+| Reflectivity at normal incidence | -0.0 dB | -36.7 dB | 36.7 dB |
+| Route-mean received power | -37.4 dBm | -41.6 dBm | **4.1 dB** |
+| RMS delay spread | 4.38 ns | 1.79 ns | 2.6 ns |
+| Rice K-factor | -3.6 dB | +9.4 dB | 13.0 dB |
+| Angular spread | 59.2 deg | 12.6 deg | 46.6 deg |
+| Frequency selectivity at the probe | 13.3 dB | 5.1 dB | 8.2 dB |
+
+Two rooms that could hardly differ more in reflectivity, and **received power
+notices by 4 dB**. Everything describing the *shape* of the channel changes
+several times over. The Rice K-factor is the clearest: metal is negative,
+meaning the echoes together are louder than the direct signal, while foam is
++9.4 dB, meaning the direct signal wins by nearly a factor of ten.
+
+At 60 GHz the power gap opens to **15.7 dB**, and metal is now the *better*
+room. With the partition attenuating a 60 GHz direct path far more than a 5 GHz
+one, reflections are the only energy reaching the shadowed half, and a room
+with absorbing walls has none of them.
+
+One detail worth keeping in view: the two reflectivity curves converge at
+grazing incidence. Even foam reflects almost perfectly at shallow angles, which
+is why a foam-walled room still has any multipath at all.
 
 ---
 

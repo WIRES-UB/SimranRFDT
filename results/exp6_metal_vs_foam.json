@@ -1,0 +1,53 @@
+{
+  "probe_position_m": [
+    2.0,
+    1.6,
+    0.9
+  ],
+  "carrier_hz": 5000000000.0,
+  "comparison": {
+    "Reflectivity, normal incidence [dB] @ 5 GHz": {
+      "metal": -0.0020487011352758695,
+      "foam": -36.731722978274355,
+      "difference": 36.72967427713908
+    },
+    "Route-mean received power [dBm] @ 5 GHz": {
+      "metal": -37.43028327770473,
+      "foam": -41.551457688761,
+      "difference": 4.121174411056266
+    },
+    "RMS delay spread [ns] @ 5 GHz": {
+      "metal": 4.384604515676642,
+      "foam": 1.7876662424263285,
+      "difference": 2.5969382732503137
+    },
+    "Rice K-factor [dB] @ 5 GHz": {
+      "metal": -3.6051203736165243,
+      "foam": 9.352886067645668,
+      "difference": -12.958006441262192
+    },
+    "Angular spread [deg] @ 5 GHz": {
+      "metal": 59.23329143866402,
+      "foam": 12.62189854892936,
+      "difference": 46.61139288973466
+    },
+    "Route-mean received power [dBm] @ 60 GHz": {
+      "metal": -62.26143251208729,
+      "foam": -77.98383505266922,
+      "difference": 15.722402540581932
+    },
+    "Rice K-factor [dB] @ 60 GHz": {
+      "metal": -20.816386181034332,
+      "foam": -0.03911431639237802,
+      "difference": -20.777271864641953
+    }
+  },
+  "selectivity_db": {
+    "metal": 13.348113362489997,
+    "foam_board": 5.084048910558039
+  },
+  "n_paths_at_probe": {
+    "metal": 68,
+    "foam_board": 68
+  }
+}
