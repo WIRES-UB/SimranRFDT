@@ -75,7 +75,7 @@ On the right, deep in the shadow behind the partition, and now the channel is ca
 
 Notice the numbers under each panel. Received power and delay spread both change, and the character of the link changes completely, even though it is the same transmitter and the same receiver.
 
-THIS SETS UP the rest of the talk. That shadow boundary in the middle is exactly where a conventional simulator has a problem, and I come back to why on slide twelve."""),
+THIS SETS UP the rest of the talk. That shadow boundary in the middle is exactly where a conventional simulator has a problem, and I come back to why on slides twelve and thirteen."""),
 
  (5, "slides/B1_paths_1.png", "One path",
   """Now the part I found most useful for actually understanding what is going on.
@@ -183,7 +183,24 @@ That crossing is computed on the infinite plane, not on the finite wall. So a bo
 
 WHY THAT MATTERS. With a yes or no test, asking "would the signal improve if this wall were slightly bigger" gives you an answer of exactly zero, everywhere, because a step function has no slope. Which means you can never learn the size of a reflector from measurements. With the smooth version you get a usable answer, and I verified it matches brute force to four decimal places."""),
 
- (13, "slides/D2_higher_order.png", "Third path and beyond",
+ (13, "slides/D1b_gradient_measured.png", "Why the smooth term is not optional",
+  """This is the measurement behind what I just described, and it is the single clearest reason this work exists.
+
+Here is why this particular test. Making the plate bigger does not move the plane it sits in. So scaling it changes the field through one thing only, the validity test. Nothing else in the simulation is affected. That isolates exactly the thing I want to compare.
+
+Left panel is the field itself as the reflection walks off the edge. Red is the conventional yes or no test, and you can see it fall off a cliff. Orange is the obvious fix, smoothing it with a sigmoid, and it is smooth but it is wrong, leaking energy well past the end of the plate while suppressing it inside. Blue is this method, fading continuously with diffraction taking over.
+
+POINT AT THE RIGHT PANEL. This is the one that matters. It is the answer to "if I made this plate slightly bigger, how would the signal change".
+
+The red line is flat on zero. Not small, exactly zero, everywhere. Which means a conventional simulator is completely blind to the size of a reflector. You could never recover it from measurements, because there is no warmer or colder to follow.
+
+The blue curve is this method, and the grey dots are brute force, computed by actually nudging the plate and re-running. They lie on top of each other. Cosine similarity of point nine nine six.
+
+IF ASKED about the orange curve, that is the important subtlety. It is non zero, so a sigmoid does give you a gradient. But look at the shape, it is wrong. Smoothness alone is not enough. The weight has to be the one the physics actually produces, and that is the whole contribution.
+
+THE TAKEAWAY LINE. This is the difference between a simulator you can only run forwards and one you can run backwards."""),
+
+ (14, "slides/D2_higher_order.png", "Third path and beyond",
   """Same idea extended.
 
 On the left, two bounces. You mirror the receiver through both wall planes in turn, then sweep forward finding each bounce point. It generalises to any number of bounces, though the cost grows.
@@ -192,7 +209,7 @@ On the right, diffraction. When a signal bends around the edge of an object, the
 
 MOVE THROUGH THIS QUICKLY unless someone asks. The important idea was on the previous slide."""),
 
- (14, None, "Validation and limitations",
+ (15, None, "Validation and limitations",
   """What I have checked, and what I have not.
 
 On the left, five checks against closed-form physics. Free space transmission agrees with the standard equation to under a thousandth of a decibel. A two ray ground reflection agrees with the analytic answer to under five hundredths. Reciprocity, meaning swapping the transmitter and the receiver, holds to thirteen decimal places, and that one is brutal because almost any bookkeeping error breaks it. Notch spacing to six hundredths of a percent. And the gradients match brute force finite differences to nine decimal places.
@@ -205,7 +222,7 @@ And the important one, third down. No measured ground truth. Everything here is 
 
 THAT IS THE HONEST STOPPING POINT. If nobody asks what is next, stop here."""),
 
- (15, "slides/E1_dloc_validation.png", "Next: validating against measured data",
+ (16, "slides/E1_dloc_validation.png", "Next: validating against measured data",
   """This answers the bullet I just flagged.
 
 The DLoc dataset from UCSD gives a hundred and five thousand measured WiFi channels at five gigahertz, collected by a mapping robot in two real spaces. That is exactly the measured ground truth this work is missing, so the plan is to simulate those spaces and compare.

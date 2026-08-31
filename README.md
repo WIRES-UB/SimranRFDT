@@ -184,7 +184,7 @@ A conducting plate with the specular point walking across its edge.
 | RFDT weight (Eq. 11) | 0.011 | 2.6e-09 | non-zero on 49 % of the sweep |
 | RFDT + diffraction | 0.007 | 2.1e-09 | non-zero everywhere, cos 0.996 vs FD |
 
-The decisive column is the last one. A correct gradient with respect to the
+This is slide 13 of the deck, and the decisive column is the last one. A correct gradient with respect to the
 *transmitter position* proves little, because path length varies smoothly
 however visibility is modelled. Plate size is different: scaling the plate does
 not move its supporting plane, so it changes the field *only* through the
