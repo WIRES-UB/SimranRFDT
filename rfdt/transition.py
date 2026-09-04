@@ -178,6 +178,94 @@ def edge_argument(
     return torch.sign(d_edge) * k * L * a
 
 
+def modified_fresnel(a: torch.Tensor) -> torch.Tensor:
+    """``F(a) = (e^{-j pi/4} / sqrt(pi)) * int_{-inf}^{a} e^{j t^2} dt``.
+
+    The transition function of the *exact* half-plane solution, as distinct
+    from ``transition_F`` above, which is the UTD transition function used to
+    regularise a diffraction coefficient.  The two are easily confused and are
+    not the same thing: this one runs from 0 at ``a = -inf`` to 1 at
+    ``a = +inf`` and takes the value **one half** at the origin, which is the
+    entire physical content of a shadow boundary, while the UTD function is
+    even in its argument and vanishes there.
+
+    Written through the Faddeeva function rather than a Fresnel integral,
+    because this module already computes ``w(z)`` to about 1e-14 and a second
+    special function would be a second thing to trust.  Substituting
+    ``t = e^{-j pi/4} tau`` turns the integral into a complementary error
+    function and ``erfc(z) = e^{-z^2} w(jz)`` finishes it:
+
+        F(a) = 1 - (1/2) e^{j a^2} w(e^{j pi/4} a).
+
+    ``w`` is evaluated only for ``Im(z) >= 0``, so negative arguments use the
+    reflection ``w(-z) = 2 e^{-z^2} - w(z)``, which collapses to
+
+        F(a) = (1/2) e^{j a^2} w(e^{j pi/4} |a|)      for a < 0,
+
+    an expression that is also better conditioned, needing no cancellation
+    between two nearly equal terms.
+    """
+    a = torch.as_tensor(a, dtype=FDTYPE)
+    w = faddeeva(_EXP_JPI4 * a.abs().to(CDTYPE))
+    phase = torch.exp(1j * (a ** 2).to(CDTYPE))
+    return torch.where(a >= 0, 1.0 - 0.5 * phase * w, 0.5 * phase * w)
+
+
+def edge_argument_fresnel(
+    d_edge: torch.Tensor,
+    dist_param: torch.Tensor,
+    k: float,
+    sin_beta0: torch.Tensor | float = 1.0,
+) -> torch.Tensor:
+    """Signed Fresnel argument ``s = sqrt(2 k L) sin(dbeta / 2)``.
+
+    The same geometry as ``edge_argument``, expressed as the variable the exact
+    solution is naturally a function of.  The two are related by
+    ``s = sign(x) sqrt(|x|)``, but forming it that way would be a mistake: the
+    square root has infinite derivative at the boundary, so the gradient would
+    blow up at exactly the point the whole method exists to differentiate
+    through.  Writing it as ``sqrt(2 k L) sin(dbeta / 2)`` keeps the sign in
+    the sine, where it belongs, and stays smooth in the geometry everywhere.
+    """
+    L = dist_param
+    # Written in the small-angle form s = d sin(beta0) sqrt(k / 2L), which is
+    # identical to sqrt(2 k L) sin(dbeta / 2) wherever the transition actually
+    # happens and, unlike it, is monotone and unbounded in d_edge.
+    #
+    # That matters more than it looks.  The sine form has to be clamped, since
+    # a is only monotone on [-pi, pi], and the clamp caps the argument at
+    # sqrt(2 k L).  The weight then saturates near 0.98 rather than 1 deep
+    # inside a facet, and that few-percent deficit is applied at every bounce
+    # of every path and compounds: it cost about 2.8 dB across a furnished
+    # room.  The physical argument does grow without limit as the reflection
+    # point moves away from the edge, so the weight must reach 1.
+    return d_edge * sin_beta0 * torch.sqrt(
+        (k / (2.0 * L.clamp_min(1e-12))).clamp_min(0.0))
+
+
+def weight_fresnel(s: torch.Tensor) -> torch.Tensor:
+    """Path-validity weight taken from the exact solution rather than from UTD.
+
+    RFDT weights a geometric term by the UTD transition function.  For a
+    perfectly conducting half plane the exact field is the geometric field
+    multiplied by ``modified_fresnel`` of the signed argument, with no additive
+    diffraction term whatsoever, so that is what the weight should be.  The
+    differences are not small and both matter:
+
+      * at a boundary the correct weight is 1/2; the UTD function gives 0,
+      * throughout the shadow the correct weight decays smoothly and stays
+        non-zero, while the UTD function is even in the signed argument and is
+        clamped to exactly zero there.
+
+    The second is the more damaging for this project's purpose.  A weight that
+    is identically zero over a region has an identically zero *gradient* over
+    that region, and eliminating exactly-zero gradients is the entire reason
+    the smooth weight was introduced in the first place.  The exact weight has
+    no such region.
+    """
+    return modified_fresnel(s)
+
+
 def weight_rfdt(x: torch.Tensor) -> torch.Tensor:
     """Eq. 11: per-interaction path-validity weight (product taken by caller)."""
     return transition_F(x)
@@ -197,7 +285,7 @@ def weight_sigmoid(d_edge: torch.Tensor, k_soft: float) -> torch.Tensor:
 # UTD wedge diffraction coefficient (Eq. 6, 7)
 # ---------------------------------------------------------------------------
 def _cot_times_F(beta: torch.Tensor, n: torch.Tensor, kL: torch.Tensor,
-                 sign: int) -> torch.Tensor:
+                 sign: int, damping: str = "rfdt") -> torch.Tensor:
     """One regularised ``cot(.) * F(k L a^{+-})`` term of Eq. 7.
 
     Classical UTD and RFDT weighting interact here, so the term needs care.
@@ -232,6 +320,10 @@ def _cot_times_F(beta: torch.Tensor, n: torch.Tensor, kL: torch.Tensor,
     safe = tan_arg.abs() > 1e-7
     cot = torch.where(safe, 1.0 / torch.where(safe, tan_arg, torch.ones_like(tan_arg)),
                       torch.zeros_like(tan_arg))
+    if damping == "classical":
+        return cot.to(CDTYPE) * F
+    if damping != "rfdt":
+        raise ValueError("damping must be 'rfdt' or 'classical', got %r" % (damping,))
     return cot.to(CDTYPE) * F * F.abs().to(CDTYPE)
 
 
@@ -244,6 +336,7 @@ def diffraction_coefficient(
     sin_beta0: torch.Tensor | float = 1.0,
     refl_0: torch.Tensor | None = None,
     refl_n: torch.Tensor | None = None,
+    damping: str = "rfdt",
 ) -> torch.Tensor:
     """UTD wedge diffraction coefficient ``D`` of Eq. 7.
 
@@ -254,6 +347,13 @@ def diffraction_coefficient(
     wedge_n      : ``n = (2 pi - alpha) / pi`` with ``alpha`` the interior
                    wedge angle; ``n = 2`` for a half plane / free edge.
     L            : distance parameter ``s' s / (s' + s) * sin^2(beta0)``.
+    damping      : ``"rfdt"`` applies the ``|F|`` factor that keeps the total
+                   field continuous when the geometric field has already been
+                   smoothed by the transition weight; ``"classical"`` omits it
+                   and gives the textbook UTD coefficient, which is the right
+                   thing to use when the geometric field is switched by a
+                   Heaviside, and which is kept so the cost of the damping can
+                   be measured against an exact reference rather than assumed.
     refl_0, refl_n : optional Fresnel coefficients of the two wedge faces.
                    When given, the reflection-boundary terms are weighted by
                    them (finite-conductivity UTD), which makes diffraction
@@ -269,10 +369,10 @@ def diffraction_coefficient(
     beta_minus = phi_d - phi_i        # incidence-shadow-boundary terms
     beta_plus = phi_d + phi_i         # reflection-boundary terms
 
-    t1 = _cot_times_F(beta_minus, n, kL, +1)
-    t2 = _cot_times_F(beta_minus, n, kL, -1)
-    t3 = _cot_times_F(beta_plus, n, kL, +1)
-    t4 = _cot_times_F(beta_plus, n, kL, -1)
+    t1 = _cot_times_F(beta_minus, n, kL, +1, damping)
+    t2 = _cot_times_F(beta_minus, n, kL, -1, damping)
+    t3 = _cot_times_F(beta_plus, n, kL, +1, damping)
+    t4 = _cot_times_F(beta_plus, n, kL, -1, damping)
 
     r0 = torch.ones_like(t3) if refl_0 is None else refl_0.to(CDTYPE)
     rn = torch.ones_like(t4) if refl_n is None else refl_n.to(CDTYPE)
