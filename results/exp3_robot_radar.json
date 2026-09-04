@@ -5837,25 +5837,25 @@
       "source": ""
     },
     "plastic_board": {
-      "target_echo_dbm": -52.8016325746288,
-      "target_snr_db": 13.732874176096558,
-      "excess_loss_db": -2.0090642831940357,
+      "target_echo_dbm": -52.79981120982555,
+      "target_snr_db": 13.734695540899807,
+      "excess_loss_db": -2.007242918390787,
       "board_thickness_m": 0.007,
       "two_way_slab_loss_db": 0.7757126773276934,
       "source": "approx"
     },
     "paper_board": {
-      "target_echo_dbm": -54.128160561735925,
-      "target_snr_db": 12.406346188989431,
-      "excess_loss_db": -3.335592270301163,
+      "target_echo_dbm": -54.11994731198746,
+      "target_snr_db": 12.414559438737896,
+      "excess_loss_db": -3.327379020552698,
       "board_thickness_m": 0.003,
       "two_way_slab_loss_db": 2.494422281433024,
       "source": "approx"
     },
     "foam_board": {
-      "target_echo_dbm": -51.229178505698236,
-      "target_snr_db": 15.30532824502712,
-      "excess_loss_db": -0.43661021426347446,
+      "target_echo_dbm": -51.16028970436648,
+      "target_snr_db": 15.37421704635888,
+      "excess_loss_db": -0.367721412931715,
       "board_thickness_m": 0.02,
       "two_way_slab_loss_db": 0.2886337232248614,
       "source": "approx"
@@ -5872,26 +5872,26 @@
     "metal": {
       "second_material": "metal",
       "front_peak_db": 8.686661818707667e-12,
-      "second_peak_db": -0.8415437332582456,
-      "contrast_db": -0.8415437332669322
+      "second_peak_db": -0.8415943331545129,
+      "contrast_db": -0.8415943331631995
     },
     "concrete": {
       "second_material": "concrete",
       "front_peak_db": 8.686661818707667e-12,
-      "second_peak_db": -23.620733950145507,
-      "contrast_db": -23.620733950154193
+      "second_peak_db": -23.620518029174885,
+      "contrast_db": -23.62051802918357
     },
     "wood": {
       "second_material": "wood",
       "front_peak_db": 8.686661818707667e-12,
-      "second_peak_db": -19.564669565774654,
-      "contrast_db": -19.56466956578334
+      "second_peak_db": -19.564563013961457,
+      "contrast_db": -19.564563013970144
     },
     "foam_board": {
       "second_material": "foam_board",
       "front_peak_db": 8.686661818707667e-12,
-      "second_peak_db": -40.03352218242266,
-      "contrast_db": -40.03352218243135
+      "second_peak_db": -40.031713100003856,
+      "contrast_db": -40.031713100012546
     }
   }
 }

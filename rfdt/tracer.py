@@ -69,7 +69,13 @@ class TracerConfig:
 
     #: maximum number of specular reflections per path
     max_order: int = 2
-    #: path-validity model: "rfdt" (Eq. 11), "heaviside" (Eq. 3), "sigmoid" (Eq. 4)
+    #: path-validity model: "rfdt" (Eq. 11), "heaviside" (Eq. 3), "sigmoid"
+    #: (Eq. 4), or "fresnel", which uses the weight the exact half-plane
+    #: solution actually calls for rather than the UTD transition function.
+    #: See transition.weight_fresnel: the two differ by a factor of two at a
+    #: boundary and, more importantly here, the UTD weight is identically zero
+    #: throughout a shadow and therefore has an identically zero gradient
+    #: there, which is the failure mode the smooth weight exists to remove.
     weighting: str = "rfdt"
     #: sharpness k of the soften-triangle baseline
     sigmoid_k: float = 40.0
@@ -93,6 +99,56 @@ class TracerConfig:
     prune_margin: float = 0.5
     #: skip diffraction from concave junctions (n < 1), outside UTD validity
     min_wedge_index: float = 1.05
+    #: highest diffraction order.  1 is single-edge diffraction only; 2 adds
+    #: edge-to-edge double diffraction, which is what carries energy into deep
+    #: shadow where the first-order term has almost none to give.
+    #:
+    #: The default is 1 on cost, not on physics.  The furnished room has 36
+    #: diffracting edges and so 1260 ordered pairs, and evaluating them costs
+    #: six to seventeen times a first-order trace depending on how many
+    #: reflection orders it is measured against.
+    #:
+    #: What that buys depends entirely on the scene, and experiment 9 measures
+    #: both ends of it.  Behind two knife edges in series in free space, single
+    #: diffraction predicts not a small field but exactly zero, and the cascade
+    #: is the whole answer.  Inside a reflective room it is worth under a dB,
+    #: because a partition there never produces a deep shadow at all: wall
+    #: reflections fill it in and sit 15 to 25 dB above every diffracted term.
+    max_diffraction_order: int = 1
+    #: include the slope-diffraction term at the second edge.  Ordinary
+    #: diffraction uses only the value of the incident field at the edge; when
+    #: that field varies rapidly across the edge, which is exactly the case
+    #: when the second edge sits near the first one's shadow boundary, the
+    #: derivative term is comparable in size and leaving it out is not a small
+    #: approximation.
+    enable_slope_diffraction: bool = True
+    #: alternating-minimisation steps for the two-edge Fermat point.  The total
+    #: path length is jointly convex in the two edge parameters, so this
+    #: converges to the global minimum.
+    #:
+    #: Twenty-five rather than the six that look visually converged on a
+    #: single pair.  Pairs whose stationary point lands on the end of a finite
+    #: edge converge much more slowly, and the doubly diffracted total is a sum
+    #: of more than a thousand terms that very nearly cancel, so it has almost
+    #: no tolerance for per-term phase noise.  Measured reciprocity error of
+    #: the total field against this setting: 7e-3 dB at 12 steps, 8e-4 dB at
+    #: 25, 4e-5 dB at 50.  The Fermat solve is cheap next to the coefficients,
+    #: so buying accuracy here costs little.
+    double_diffraction_iterations: int = 25
+    #: minimum separation between the two diffraction points, in wavelengths.
+    #: The ray-optical cascade needs the second edge to lie in the far field of
+    #: the first, and it fails hard rather than gracefully when it does not:
+    #: the spreading factor carries 1/sqrt(s12), so two edges meeting at a
+    #: corner drive the amplitude to infinity.  That configuration is not a
+    #: cascade at all but the separate canonical problem of corner diffraction,
+    #: which this does not implement.  Pairs sharing a vertex are rejected
+    #: outright and the rest are held to this separation.
+    double_diffraction_min_separation_wavelengths: float = 1.0
+    #: discard a doubly-diffracted candidate whose purely geometric amplitude
+    #: is more than this far below the free-space direct field.  The bound uses
+    #: no diffraction coefficients, so it is cheap, and the losslessness of the
+    #: choice is asserted in the tests rather than assumed.
+    double_diffraction_dynamic_range_db: float = 80.0
 
 
 @dataclass
@@ -382,15 +438,31 @@ class RFDTracer:
             s1 = (s * seg_len).clamp_min(1e-6)
             s2 = ((1.0 - s) * seg_len).clamp_min(1e-6)
             L = tf.distance_parameter(s1, s2)
-            w_face = tf.transition_F(tf.edge_argument(tau.clamp_min(0.0), L, k))
+            # named use_fresnel, not fresnel: this scope imports the Fresnel
+            # coefficient function of that name from materials, and shadowing
+            # it fails only later, inside the solid-object branch
+            use_fresnel = self.cfg.weighting == "fresnel"
+            if use_fresnel:
+                # The exact weight satisfies F(s) + F(-s) = 1 identically, so
+                # "goes around" and "goes through" become a true partition of
+                # the incident energy rather than two separately clamped terms
+                # that happen not to sum to anything in particular.  With the
+                # UTD weight the pair sums to F(|x|), which falls to zero at
+                # the silhouette: energy simply disappears there and the
+                # diffraction term is relied on to put it back.
+                s_arg = tf.edge_argument_fresnel(tau, L, k)
+                w_face = tf.weight_fresnel(s_arg)
+            else:
+                w_face = tf.transition_F(tf.edge_argument(tau.clamp_min(0.0), L, k))
 
             if self.cfg.enable_transmission:
                 surf = self.surfaces[si]
                 mat = self.material(si)
                 params = self._params_for(si, mat_overrides)
                 cos_ti = (du * n).sum(-1).abs().clamp(1e-6, 1.0)
-                f_block = tf.transition_F(
-                    tf.edge_argument((-tau).clamp_min(0.0), L, k))
+                f_block = (tf.weight_fresnel(-s_arg) if use_fresnel
+                           else tf.transition_F(
+                               tf.edge_argument((-tau).clamp_min(0.0), L, k)))
                 if surf.solid:
                     # one interface plus half the traversal per crossed face;
                     # the reciprocal (direction-independent) interface form is
@@ -466,6 +538,15 @@ class RFDTracer:
                 weight = weight * tf.weight_heaviside(d_edge)
             elif self.cfg.weighting == "sigmoid":
                 weight = weight * tf.weight_sigmoid(d_edge, self.cfg.sigmoid_k)
+            elif self.cfg.weighting == "fresnel":
+                sin_in = torch.sqrt(
+                    (1.0 - (dirs[i] * e_dir).sum(-1) ** 2).clamp_min(1e-12))
+                sin_out = torch.sqrt(
+                    (1.0 - (dirs[i + 1] * e_dir).sum(-1) ** 2).clamp_min(1e-12))
+                sin_b0 = torch.sqrt(sin_in * sin_out)
+                Lp = tf.distance_parameter(lens[i], lens[i + 1], sin_b0)
+                weight = weight * tf.weight_fresnel(
+                    tf.edge_argument_fresnel(d_edge, Lp, k, sin_b0))
             else:
                 # beta0 is the angle the ray makes with the nearest edge.  The
                 # incident and reflected rays make equal angles with the
@@ -501,55 +582,24 @@ class RFDTracer:
                      ["refl" + "".join(f"-{s}" for s in seq)],
                      [torch.stack(nodes, dim=-2)])
 
-    def _diffraction(self, tx: Transmitter, rx_pos: torch.Tensor, rx: Receiver,
-                     wedge: Wedge, vertices=None, mat_overrides=None) -> Paths:
-        """First-order wedge diffraction, Eq. 6 with the coefficient of Eq. 7.
+    # ------------------------------------------------------------------
+    # edge geometry shared by first- and second-order diffraction
+    # ------------------------------------------------------------------
+    def _edge_geom(self, wedge: Wedge, vertices=None):
+        """Everything about one diffracting edge that does not depend on a ray.
 
-        The diffraction point is the Fermat point of Eq. 40.  For a straight
-        edge the stationarity condition of Eq. 42 has the closed form
-
-            t* = (h_rx t_tx + h_tx t_rx) / (h_tx + h_rx)
-
-        with ``t`` the projections of the endpoints onto the edge and ``h``
-        their perpendicular distances: an exact, differentiable solution,
-        so no iterative root find is needed and the gradient is clean.
+        Returns the edge origin and unit vector, its length, the local frame
+        ``(b1, b2)`` in which wedge angles are measured, the wedge index and
+        the two face surfaces.  Extracted so that single and double
+        diffraction cannot drift apart: the frame convention in particular has
+        to be identical or the two orders would disagree about which side of a
+        wedge is which.
         """
-        k, lam = tx.k, tx.wavelength
-        R = rx_pos.shape[0]
         v = self.mesh.vertices if vertices is None else vertices
         v0, v1 = v[wedge.v0], v[wedge.v1]
         e_vec = v1 - v0
         e_len = e_vec.norm().clamp_min(1e-9)
         e = e_vec / e_len
-        p_tx = tx.position.reshape(1, 3).expand(R, 3)
-
-        def decompose(p):
-            """Projection along the edge and perpendicular distance to it."""
-            r = p - v0
-            t = (r * e).sum(-1)
-            return t, (r - t.unsqueeze(-1) * e).norm(dim=-1).clamp_min(1e-9)
-
-        t_a, h_a = decompose(p_tx)
-        t_b, h_b = decompose(rx_pos)
-        t_star = ((h_b * t_a + h_a * t_b) / (h_a + h_b).clamp_min(1e-12))
-        t_star = t_star.clamp(0.0, float(e_len))
-        p_d = v0 + t_star.unsqueeze(-1) * e
-
-        s_p = (p_d - p_tx).norm(dim=-1).clamp_min(1e-6)      # s'
-        s_o = (rx_pos - p_d).norm(dim=-1).clamp_min(1e-6)    # s
-        u_in = (p_d - p_tx) / s_p.unsqueeze(-1)
-        u_out = (rx_pos - p_d) / s_o.unsqueeze(-1)
-        # Keller's cone: the incident and diffracted rays make the same angle
-        # beta0 with the edge, so either would do.  They differ only where
-        # t_star has been clamped to a finite edge's endpoint, and there taking
-        # just one of them would make the result depend on which end is the
-        # source.  The geometric mean is reciprocal and identical on the cone.
-        sin_in = torch.sqrt((1.0 - (u_in * e).sum(-1) ** 2).clamp_min(1e-12))
-        sin_out = torch.sqrt((1.0 - (u_out * e).sum(-1) ** 2).clamp_min(1e-12))
-        sin_b0 = torch.sqrt(sin_in * sin_out)
-        L = tf.distance_parameter(s_p, s_o, sin_b0)
-
-        # local wedge frame: b1 along face A's interior direction, b2 air-side
         tris = self.mesh.tri(vertices)
         w1 = tris[wedge.tri_a].mean(dim=0) - v0
         b1 = normalize(w1 - (w1 * e).sum() * e)
@@ -557,52 +607,125 @@ class RFDTracer:
         n_a = supporting_plane(tris[wedge.tri_a])[1]
         if float((n_a * b2).sum()) < 0:
             b2 = -b2
-
-        def wedge_angle(u):
-            """Angle of ``u`` about the edge, measured from face A into the air."""
-            up = normalize(u - (u * e).sum(-1, keepdim=True) * e)
-            ang = torch.atan2((up * b2).sum(-1), (up * b1).sum(-1))
-            return torch.where(ang < 0, ang + 2.0 * np.pi, ang)
-
-        phi_i = wedge_angle(-u_in)
-        phi_d = wedge_angle(u_out)
-        n_idx = torch.as_tensor(wedge.n_index, dtype=FDTYPE)
-
-        # finite-conductivity UTD: weight the reflection-boundary terms by the
-        # Fresnel coefficients of the two wedge faces, which makes diffraction
-        # material dependent rather than assuming a perfect conductor
         lut = self.mesh.surface_of_face()
         si_a = lut[wedge.tri_a]
         si_b = lut[wedge.tri_b] if wedge.tri_b is not None else si_a
-        # Luebbers' heuristic evaluates each face's coefficient at its grazing
-        # angle.  Using the incidence angle alone would make the coefficient
-        # depend on which end of the path is the source; the geometric mean of
-        # the incidence and diffraction angles is symmetric under path
-        # reversal and reduces to the standard value when they coincide, which
-        # is the specular-on-edge case where these terms matter most.
-        def _sym_grazing(angle_fn):
-            """Reciprocal grazing cosine from the two ray angles."""
-            return torch.sqrt(angle_fn(phi_i).abs() * angle_fn(phi_d).abs()
-                              ).clamp(1e-6, 1.0)
+        return {"v0": v0, "e": e, "e_len": e_len, "b1": b1, "b2": b2,
+                "n_idx": torch.as_tensor(wedge.n_index, dtype=FDTYPE),
+                "si_a": si_a, "si_b": si_b, "wedge": wedge}
 
-        cos_0 = _sym_grazing(torch.sin)
-        cos_n = _sym_grazing(lambda a: torch.sin(n_idx * np.pi - a))
-        # The wedge-face coefficients get the same roughness treatment as an
-        # ordinary bounce: they represent reflection off those faces, so a
-        # rough face must reduce them by the same coherence factor.  cos_0 and
-        # cos_n are already the reciprocal grazing cosines of _sym_grazing, so
-        # the roughness factor inherits that symmetry and reciprocity holds.
-        r0 = reflection_coefficient(tx.frequency, cos_0, self.material(si_a),
-                                    self.cfg.polarisation,
-                                    self._params_for(si_a, mat_overrides),
-                                    roughness=self.cfg.surface_roughness)
-        rn = reflection_coefficient(tx.frequency, cos_n, self.material(si_b),
-                                    self.cfg.polarisation,
-                                    self._params_for(si_b, mat_overrides),
-                                    roughness=self.cfg.surface_roughness)
+    @staticmethod
+    def _fermat_on_edge(a: torch.Tensor, b: torch.Tensor, geom) -> torch.Tensor:
+        """Point on a straight edge minimising ``|a - p| + |p - b|``.
 
-        D = tf.diffraction_coefficient(phi_i, phi_d, n_idx.expand(R), k, L,
-                                       sin_b0, r0, rn)
+        Stationarity of the total path length gives the closed form
+
+            t* = (h_b t_a + h_a t_b) / (h_a + h_b)
+
+        with ``t`` the projections of the two endpoints onto the edge line and
+        ``h`` their perpendicular distances.  Exact and differentiable, so no
+        root find is needed and the gradient stays clean.  The clamp handles a
+        stationary point that falls off the end of a finite edge, where the
+        true minimum is the nearer endpoint.
+        """
+        v0, e, e_len = geom["v0"], geom["e"], geom["e_len"]
+
+        def decompose(p):
+            r = p - v0
+            t = (r * e).sum(-1)
+            return t, (r - t.unsqueeze(-1) * e).norm(dim=-1).clamp_min(1e-9)
+
+        t_a, h_a = decompose(a)
+        t_b, h_b = decompose(b)
+        t = (h_b * t_a + h_a * t_b) / (h_a + h_b).clamp_min(1e-12)
+        return t.clamp(0.0, float(e_len))
+
+    @staticmethod
+    def _wedge_angle(u: torch.Tensor, geom) -> torch.Tensor:
+        """Angle of direction ``u`` about the edge, from face A into the air."""
+        e, b1, b2 = geom["e"], geom["b1"], geom["b2"]
+        up = normalize(u - (u * e).sum(-1, keepdim=True) * e)
+        ang = torch.atan2((up * b2).sum(-1), (up * b1).sum(-1))
+        return torch.where(ang < 0, ang + 2.0 * np.pi, ang)
+
+    @staticmethod
+    def _sin_beta0(u_in: torch.Tensor, u_out: torch.Tensor,
+                   e: torch.Tensor) -> torch.Tensor:
+        """Reciprocal cone angle from the incident and diffracted directions.
+
+        On Keller's cone the two angles are equal and either would do.  They
+        differ only where the stationary point has been clamped to the end of a
+        finite edge, and there taking one alone would make the answer depend on
+        which end of the path is the source.  The geometric mean is symmetric
+        under path reversal and identical on the cone.
+        """
+        sin_in = torch.sqrt((1.0 - (u_in * e).sum(-1) ** 2).clamp_min(1e-12))
+        sin_out = torch.sqrt((1.0 - (u_out * e).sum(-1) ** 2).clamp_min(1e-12))
+        return torch.sqrt(sin_in * sin_out)
+
+    def _face_reflections(self, tx: Transmitter, phi_i, phi_d, geom,
+                          mat_overrides):
+        """Luebbers' face coefficients for a wedge, evaluated reciprocally.
+
+        The heuristic weights each reflection-boundary term by the Fresnel
+        coefficient of the corresponding wedge face at its grazing angle.
+        Using the incidence angle alone would make the coefficient depend on
+        which end of the path is the source, so the geometric mean of the
+        incidence and diffraction values is used; it reduces to the standard
+        value when they coincide, which is the specular-on-edge case where
+        these terms matter most.
+        """
+        n_idx = geom["n_idx"]
+
+        def sym(angle_fn):
+            # Clamp inside the square root, not after it.  A ray grazing
+            # exactly along a wedge face drives the product to zero, where the
+            # square root's derivative is infinite; clamping the result
+            # afterwards fixes the value and leaves the backward pass emitting
+            # NaN for the whole batch.  Single diffraction rarely lands exactly
+            # on that angle, so this sat latent until edge-to-edge cascades
+            # started hitting it routinely.
+            prod = (angle_fn(phi_i).abs() * angle_fn(phi_d).abs())
+            return torch.sqrt(prod.clamp_min(1e-12)).clamp(1e-6, 1.0)
+
+        cos_0 = sym(torch.sin)
+        cos_n = sym(lambda a: torch.sin(n_idx * np.pi - a))
+        r0 = reflection_coefficient(
+            tx.frequency, cos_0, self.material(geom["si_a"]),
+            self.cfg.polarisation,
+            self._params_for(geom["si_a"], mat_overrides),
+            roughness=self.cfg.surface_roughness)
+        rn = reflection_coefficient(
+            tx.frequency, cos_n, self.material(geom["si_b"]),
+            self.cfg.polarisation,
+            self._params_for(geom["si_b"], mat_overrides),
+            roughness=self.cfg.surface_roughness)
+        return r0, rn
+
+    def _diffraction(self, tx: Transmitter, rx_pos: torch.Tensor, rx: Receiver,
+                     wedge: Wedge, vertices=None, mat_overrides=None) -> Paths:
+        """First-order wedge diffraction, Eq. 6 with the coefficient of Eq. 7."""
+        k, lam = tx.k, tx.wavelength
+        R = rx_pos.shape[0]
+        geom = self._edge_geom(wedge, vertices)
+        p_tx = tx.position.reshape(1, 3).expand(R, 3)
+
+        t_star = self._fermat_on_edge(p_tx, rx_pos, geom)
+        p_d = geom["v0"] + t_star.unsqueeze(-1) * geom["e"]
+
+        s_p = (p_d - p_tx).norm(dim=-1).clamp_min(1e-6)      # s'
+        s_o = (rx_pos - p_d).norm(dim=-1).clamp_min(1e-6)    # s
+        u_in = (p_d - p_tx) / s_p.unsqueeze(-1)
+        u_out = (rx_pos - p_d) / s_o.unsqueeze(-1)
+        sin_b0 = self._sin_beta0(u_in, u_out, geom["e"])
+        L = tf.distance_parameter(s_p, s_o, sin_b0)
+
+        phi_i = self._wedge_angle(-u_in, geom)
+        phi_d = self._wedge_angle(u_out, geom)
+        r0, rn = self._face_reflections(tx, phi_i, phi_d, geom, mat_overrides)
+
+        D = tf.diffraction_coefficient(phi_i, phi_d, geom["n_idx"].expand(R),
+                                       k, L, sin_b0, r0, rn)
         A = tf.spreading_factor(s_p, s_o)
         L_tot = s_p + s_o
         g = tx.antenna.field_gain(u_in) * rx.antenna.field_gain(-u_out)
@@ -611,7 +734,7 @@ class RFDTracer:
                 * torch.exp(-1j * (k * L_tot).to(CDTYPE)))
 
         # both legs of the diffracted ray must themselves be unobstructed
-        excl = (si_a, si_b)
+        excl = (geom["si_a"], geom["si_b"])
         gain = gain * self._segment_weight(p_tx, p_d, k, excl, vertices, mat_overrides)
         gain = gain * self._segment_weight(p_d, rx_pos, k, excl, vertices, mat_overrides)
 
@@ -620,6 +743,332 @@ class RFDTracer:
                      u_out.unsqueeze(-2), torch.ones(1, dtype=torch.long),
                      [f"diff-{wedge.v0}_{wedge.v1}"],
                      [torch.stack([p_tx, p_d, rx_pos], dim=-2)])
+
+    # ------------------------------------------------------------------
+    # second-order (edge-to-edge) diffraction
+    # ------------------------------------------------------------------
+    def _double_fermat(self, p_tx: torch.Tensor, rx_pos: torch.Tensor,
+                       ga, gb):
+        """Stationary path Tx -> edge A -> edge B -> Rx, by alternating steps.
+
+        The total length ``|Tx - P1| + |P1 - P2| + |P2 - Rx|`` is a sum of
+        norms of affine functions of the two edge parameters, so it is jointly
+        convex in them.  Alternating exact minimisation over one parameter at a
+        time therefore converges to the global minimum rather than to some
+        nearby stationary point, and each step is the same closed form the
+        single-edge case uses.  Unrolling a fixed number of steps keeps the
+        whole construction differentiable by autograd, with no implicit
+        function theorem needed.
+        """
+        p2 = gb["v0"] + 0.5 * float(gb["e_len"]) * gb["e"]
+        p2 = p2.reshape(1, 3).expand_as(rx_pos)
+        p1 = None
+        for _ in range(max(1, int(self.cfg.double_diffraction_iterations))):
+            t1 = self._fermat_on_edge(p_tx, p2, ga)
+            p1 = ga["v0"] + t1.unsqueeze(-1) * ga["e"]
+            t2 = self._fermat_on_edge(p1, rx_pos, gb)
+            p2 = gb["v0"] + t2.unsqueeze(-1) * gb["e"]
+        return p1, p2
+
+    def _double_diffraction(self, tx: Transmitter, rx_pos: torch.Tensor,
+                            rx: Receiver, wa: Wedge, wb: Wedge,
+                            vertices=None, mat_overrides=None):
+        """Diffraction at one edge and then at a second, Tx -> A -> B -> Rx.
+
+        Why this is not simply the coefficient applied twice
+        ----------------------------------------------------
+        Amplitude bookkeeping first.  The field leaving edge A spreads as an
+        astigmatic wave whose caustic distance at edge B is ``s1 + s12``, not
+        ``s12``, because the wave remembers how far it travelled before the
+        first edge.  Using ``s12`` alone, which is what a naive cascade does,
+        gives an amplitude that is not reciprocal: swapping transmitter and
+        receiver changes the answer by the ratio of the two end distances.
+        With the correct caustic distance the whole product collapses to
+
+            sqrt(1 / (s1 * s12 * s2 * (s1 + s12 + s2)))
+
+        which is manifestly symmetric under reversing the path, and the tests
+        check that it holds to machine precision.
+
+        Second, the validity question.  Ordinary diffraction assumes the field
+        arriving at the edge is locally a plane wave, so that its value at the
+        edge is the whole story.  The field arriving at edge B is a diffracted
+        field, and near edge A's shadow boundary it varies rapidly across
+        edge B.  There the value alone is not enough and the slope term below
+        supplies the missing derivative.  Where even that is insufficient, a
+        uniform double-diffraction coefficient with a two-variable transition
+        function is required, which this does not implement.  Rather than
+        approximate that regime, pairs closer than
+        ``double_diffraction_min_separation_wavelengths`` are rejected outright
+        and pairs sharing a vertex are excluded as corners.
+        """
+        need_slope = bool(self.cfg.enable_slope_diffraction)
+        k, lam = tx.k, tx.wavelength
+        R = rx_pos.shape[0]
+        ga = self._edge_geom(wa, vertices)
+        gb = self._edge_geom(wb, vertices)
+        p_tx = tx.position.reshape(1, 3).expand(R, 3)
+
+        p1, p2 = self._double_fermat(p_tx, rx_pos, ga, gb)
+
+        min_sep = (self.cfg.double_diffraction_min_separation_wavelengths
+                   * lam)
+        s1 = (p1 - p_tx).norm(dim=-1).clamp_min(1e-6)
+        s12_raw = (p2 - p1).norm(dim=-1)
+        s2 = (rx_pos - p2).norm(dim=-1).clamp_min(1e-6)
+        # Clamp before computing anything, not after.  The separation test
+        # below discards the degenerate entries, but masking with torch.where
+        # does not stop the discarded branch from being evaluated, and its
+        # backward pass multiplies a zero by the infinity that 1/sqrt(s12)
+        # produces at s12 = 0.  That yields NaN gradients for the whole batch
+        # while leaving the forward values perfectly correct.  Clamping first
+        # keeps the rejected branch finite so the mask can do its job.
+        s12 = s12_raw.clamp_min(max(min_sep, 1e-6))
+        L_tot = s1 + s12 + s2
+
+        u_in = (p1 - p_tx) / s1.unsqueeze(-1)
+        u_mid = (p2 - p1) / s12.unsqueeze(-1)
+        u_out = (rx_pos - p2) / s2.unsqueeze(-1)
+
+        sin_b1 = self._sin_beta0(u_in, u_mid, ga["e"])
+        sin_b2 = self._sin_beta0(u_mid, u_out, gb["e"])
+        # the equivalent source for the second edge sits at the caustic
+        # distance of the wave leaving the first, which is s1 + s12
+        rho2 = s1 + s12
+
+        # Distance parameters, symmetrised.  UTD defines L from the distance to
+        # the source on one side and to the observation point on the other, and
+        # in a cascade those are different things depending on which end of the
+        # path is the transmitter: travelling one way the second edge is fed by
+        # an equivalent source at s1 + s12 and observed at s2, travelling the
+        # other it is fed at s2 and observed at the first edge, s12 away.  The
+        # amplitude works out symmetric on its own, but these do not, and the
+        # result was several dB of reciprocity error that no amount of solver
+        # convergence removed because it was not a numerical error at all.
+        #
+        # The geometric mean of the two directions is reciprocal by
+        # construction and reduces to the standard value when they agree.  It
+        # is the same device already used for the cone angle and for Luebbers'
+        # face coefficients, and it is a symmetrisation rather than a
+        # derivation: the rigorous treatment is a joint two-edge coefficient
+        # with a two-variable transition function, which this does not
+        # implement.
+        def sym_L(fwd, rev, sin_b):
+            return torch.sqrt((fwd * rev).clamp_min(1e-30)) * sin_b ** 2
+
+        L1 = sym_L(s1 * s12 / (s1 + s12).clamp_min(1e-12),
+                   (s12 + s2) * s1 / (s1 + s12 + s2).clamp_min(1e-12), sin_b1)
+        L2 = sym_L(rho2 * s2 / (rho2 + s2).clamp_min(1e-12),
+                   s12 * s2 / (s12 + s2).clamp_min(1e-12), sin_b2)
+
+        phi_i1 = self._wedge_angle(-u_in, ga)
+        phi_d1 = self._wedge_angle(u_mid, ga)
+        phi_i2 = self._wedge_angle(-u_mid, gb)
+        phi_d2 = self._wedge_angle(u_out, gb)
+
+        r0a, rna = self._face_reflections(tx, phi_i1, phi_d1, ga, mat_overrides)
+        r0b, rnb = self._face_reflections(tx, phi_i2, phi_d2, gb, mat_overrides)
+
+        # The coefficients are built through closures so the slope term can
+        # differentiate them with respect to one angle.  The face reflection
+        # weights are held fixed inside the closure: the rapid variation that
+        # slope diffraction exists to capture lives in the transition terms,
+        # while the Fresnel weights vary slowly across the edge, so freezing
+        # them is a controlled approximation rather than an oversight.
+        def make_D1(angle):
+            return tf.diffraction_coefficient(
+                phi_i1, angle, ga["n_idx"].expand(R), k, L1, sin_b1, r0a, rna)
+
+        def make_D2(angle):
+            return tf.diffraction_coefficient(
+                angle, phi_d2, gb["n_idx"].expand(R), k, L2, sin_b2, r0b, rnb)
+
+        D1 = make_D1(phi_d1)
+        D2 = make_D2(phi_i2)
+
+
+        A1 = tf.spreading_factor(s1, s12)
+        A2 = tf.spreading_factor(rho2, s2)
+        g = tx.antenna.field_gain(u_in) * rx.antenna.field_gain(-u_out)
+        e_inc = (lam / (4.0 * np.pi * s1)) * g
+        phase = torch.exp(-1j * (k * L_tot).to(CDTYPE))
+        common = e_inc.to(CDTYPE) * A1.to(CDTYPE) * A2.to(CDTYPE) * phase
+
+        gain = common * D1 * D2
+
+        if need_slope:
+            # Slope diffraction.  The incident field at edge B varies across
+            # the edge only through edge A's diffraction angle, which changes
+            # at the rate 1/s12 for a transverse step, so
+            #     dE_i/dn' = e_inc * A1 * (dD1/dphi_d1) / s12,
+            # and the second edge responds to that gradient through dD2/dphi_i2
+            # with the standard 1/(jk) prefactor.  Both derivatives come from
+            # autograd rather than a hand-differentiated coefficient, which is
+            # the one place in this simulator where the differentiability built
+            # for inverse rendering pays off in the forward direction as well.
+            # The pair is reciprocal because the wedge coefficient is symmetric
+            # in its two angles, so reversing the path swaps which derivative
+            # is which and leaves the product alone.
+            keep = torch.is_grad_enabled()
+            d1_slope = self._angle_derivative(make_D1, phi_d1, keep)
+            d2_slope = self._angle_derivative(make_D2, phi_i2, keep)
+            slope = (common * d1_slope * d2_slope
+                     / (1j * k * s12).to(CDTYPE))
+            gain = gain + slope
+
+        # A pair can be a valid cascade for some receivers on a route and
+        # degenerate for others, so the separation condition is enforced per
+        # receiver rather than only when selecting candidates.  Without this a
+        # single receiver position at which the two stationary points collapse
+        # would inject the 1/sqrt(s12) singularity into an otherwise sound path.
+        gain = torch.where(s12_raw > min_sep, gain, torch.zeros_like(gain))
+
+        excl = (ga["si_a"], ga["si_b"], gb["si_a"], gb["si_b"])
+        gain = gain * self._segment_weight(p_tx, p1, k, excl, vertices, mat_overrides)
+        gain = gain * self._segment_weight(p1, p2, k, excl, vertices, mat_overrides)
+        gain = gain * self._segment_weight(p2, rx_pos, k, excl, vertices, mat_overrides)
+
+        return Paths(gain.unsqueeze(-1), L_tot.unsqueeze(-1),
+                     (L_tot / C0).unsqueeze(-1), u_in.unsqueeze(-2),
+                     u_out.unsqueeze(-2),
+                     torch.full((1,), 2, dtype=torch.long),
+                     [f"diff2-{wa.v0}_{wa.v1}-{wb.v0}_{wb.v1}"],
+                     [torch.stack([p_tx, p1, p2, rx_pos], dim=-2)])
+
+    @staticmethod
+    def _angle_derivative(make_D, angle: torch.Tensor,
+                          keep_graph: bool) -> torch.Tensor:
+        """dD/dangle for a complex coefficient, in either grad mode.
+
+        The derivative is taken with respect to a zero perturbation added to
+        the angle rather than with respect to the angle itself.  That is what
+        makes this work under ``torch.no_grad`` and in a plain forward
+        evaluation, where the angle has no graph behind it at all and asking
+        autograd for a derivative with respect to it simply fails.  The
+        perturbation is a leaf that always requires grad, so a graph exists in
+        every case, and its derivative at zero equals the one wanted.
+
+        The alternative of detaching the angle into a leaf would work here and
+        silently sever the main term's dependence on the geometry, leaving the
+        forward values right and every gradient to the scene zero.
+
+        ``keep_graph`` propagates the caller's grad mode: with it the result is
+        itself differentiable, so a slope-diffracted path still carries
+        gradients back to scene parameters.
+        """
+        with torch.enable_grad():
+            eps = torch.zeros_like(angle, requires_grad=True)
+            D = make_D(angle + eps)
+            gr = torch.autograd.grad(D.real.sum(), eps, create_graph=keep_graph,
+                                     retain_graph=True)[0]
+            gi = torch.autograd.grad(D.imag.sum(), eps, create_graph=keep_graph,
+                                     retain_graph=True)[0]
+        return torch.complex(gr, gi)
+
+    @staticmethod
+    def _point_segment_distance(p: torch.Tensor, geom) -> torch.Tensor:
+        """Exact shortest distance from points to a finite edge."""
+        v0, e, e_len = geom["v0"], geom["e"], float(geom["e_len"])
+        t = ((p - v0) * e).sum(-1).clamp(0.0, e_len)
+        return (p - (v0 + t.unsqueeze(-1) * e)).norm(dim=-1)
+
+    @staticmethod
+    def _segment_segment_distance(ga, gb) -> float:
+        """Exact shortest distance between two finite edges.
+
+        Standard closed form with the degenerate parallel case handled, sampled
+        nowhere and iterated nowhere so it costs almost nothing.  It is used
+        only as a lower bound on the middle leg, which is what makes the
+        candidate bound rigorous rather than a guess.
+        """
+        p0, u, lu = ga["v0"], ga["e"], float(ga["e_len"])
+        q0, v, lv = gb["v0"], gb["e"], float(gb["e_len"])
+        w0 = p0 - q0
+        a = 1.0
+        b = float((u * v).sum())
+        c = 1.0
+        d = float((u * w0).sum())
+        e_ = float((v * w0).sum())
+        den = a * c - b * b
+        if abs(den) < 1e-12:                     # parallel edges
+            sc, tc = 0.0, (e_ / c if abs(c) > 1e-12 else 0.0)
+        else:
+            sc = (b * e_ - c * d) / den
+            tc = (a * e_ - b * d) / den
+        sc = min(max(sc, 0.0), lu)
+        tc = min(max(tc, 0.0), lv)
+        return float(((p0 + sc * u) - (q0 + tc * v)).norm())
+
+    def _double_candidates(self, tx: Transmitter, rx_pos: torch.Tensor,
+                           wedges: Sequence[Wedge], vertices=None):
+        """Ordered edge pairs worth evaluating.
+
+        Three filters, and it is worth being exact about what each one earns,
+        because only the first currently earns anything.  Measured on the
+        furnished room at 5 GHz, from 1260 ordered pairs:
+
+          * sharing a vertex, rejected: 144.  Not an optimisation but a
+            correctness requirement, since those are corners rather than
+            cascades and their amplitude is singular.
+          * closer than the far-field separation, rejected: 0.  The room's
+            edges are metres apart and a wavelength is 6 cm, so this only ever
+            fires on finely tessellated geometry.
+          * below the amplitude bound, rejected: 0.
+
+        The amplitude bound is rigorous, being built from the shortest possible
+        length of each leg, and it is useless, which is worth understanding
+        rather than tuning.  Almost all of a cascade's attenuation lives in the
+        two diffraction coefficients, each typically tens of dB down, and
+        almost none of it in the spreading factor the bound is made of.  A
+        bound that ignores the coefficients therefore sits far above every real
+        contribution.  Making it bite would need a bound on the coefficients
+        themselves, which the damping makes possible in principle and which is
+        not attempted here; the honest present position is that the cost of
+        second-order diffraction is the cost of evaluating all 1116 surviving
+        pairs, and that is why it is off by default.
+        """
+        p_tx = tx.position.reshape(1, 3).expand(rx_pos.shape[0], 3)
+        direct = (rx_pos - p_tx).norm(dim=-1).clamp_min(1e-6)
+        floor = 10.0 ** (-self.cfg.double_diffraction_dynamic_range_db / 20.0)
+        min_sep = (self.cfg.double_diffraction_min_separation_wavelengths
+                   * tx.wavelength)
+        geoms = [self._edge_geom(w, vertices) for w in wedges]
+
+        def amplitude_bound(s1, s12, s2):
+            return torch.sqrt(1.0 / (s1 * s12 * s2 *
+                                     (s1 + s12 + s2)).clamp_min(1e-30))
+
+        with torch.no_grad():
+            d_tx = [self._point_segment_distance(p_tx, g).clamp_min(1e-6)
+                    for g in geoms]
+            d_rx = [self._point_segment_distance(rx_pos, g).clamp_min(1e-6)
+                    for g in geoms]
+            stage1 = []
+            for i, wi in enumerate(wedges):
+                for j, wj in enumerate(wedges):
+                    if i == j:
+                        continue
+                    if {wi.v0, wi.v1} & {wj.v0, wj.v1}:
+                        continue                 # corner, not a cascade
+                    sep = self._segment_segment_distance(geoms[i], geoms[j])
+                    if sep < min_sep:
+                        continue
+                    if not bool((amplitude_bound(d_tx[i], sep, d_rx[j])
+                                 * direct > floor).any()):
+                        continue
+                    stage1.append((i, j))
+
+            keep = []
+            for i, j in stage1:
+                p1, p2 = self._double_fermat(p_tx, rx_pos, geoms[i], geoms[j])
+                s1 = (p1 - p_tx).norm(dim=-1).clamp_min(1e-6)
+                s12 = (p2 - p1).norm(dim=-1).clamp_min(1e-6)
+                s2 = (rx_pos - p2).norm(dim=-1).clamp_min(1e-6)
+                ok = (s12 > min_sep) & (amplitude_bound(s1, s12, s2)
+                                        * direct > floor)
+                if bool(ok.any()):
+                    keep.append((wedges[i], wedges[j]))
+        return keep
 
     # ------------------------------------------------------------------
     # public API
@@ -654,11 +1103,20 @@ class RFDTracer:
             families.append(self._specular(tx, rx_pos, rx, seq, vertices, mat_overrides))
 
         if self.cfg.enable_diffraction:
-            for w in self.mesh.wedges():
-                if w.n_index < self.cfg.min_wedge_index:
-                    continue
+            diffracting = [w for w in self.mesh.wedges()
+                           if w.n_index >= self.cfg.min_wedge_index]
+            for w in diffracting:
                 families.append(self._diffraction(tx, rx_pos, rx, w, vertices,
                                                   mat_overrides))
+            if self.cfg.max_diffraction_order >= 2:
+                # Edge to edge.  In deep shadow the first-order term is nearly
+                # zero, so this is not a correction to it but potentially the
+                # dominant contribution, which is why it is enumerated rather
+                # than treated as a refinement.
+                for wa, wb in self._double_candidates(tx, rx_pos, diffracting,
+                                                      vertices):
+                    families.append(self._double_diffraction(
+                        tx, rx_pos, rx, wa, wb, vertices, mat_overrides))
         return _cat_paths(families)
 
     @staticmethod

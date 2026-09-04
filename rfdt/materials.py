@@ -27,7 +27,7 @@ scenarios and are labelled as such wherever they are reported.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import torch
 
@@ -94,6 +94,18 @@ class Material:
     label: str = ""
     #: appended last so that existing positional constructions are unaffected
     roughness_sigma: float = 0.0
+    #: optional stratification.  When present the material is a stack rather
+    #: than a homogeneous block, and its reflection and transmission come from
+    #: the exact transfer-matrix solution instead of the single-interface
+    #: Fresnel value.  ``a``, ``b``, ``c``, ``d`` are then nominal only, kept
+    #: so that reporting code which asks for a permittivity still gets an
+    #: answer, and they are not what the physics uses.
+    layers: Optional[Tuple["Layer", ...]] = None
+
+    @property
+    def is_layered(self) -> bool:
+        """Whether this material is a stratified stack rather than a block."""
+        return bool(self.layers)
 
     def __post_init__(self):
         """Coerce the position to a float64 tensor."""
@@ -517,10 +529,19 @@ def reflection_coefficient(
     ideally smooth coefficient, which is what every ablation against the
     previous behaviour uses.
     """
-    fr = fresnel(f_hz, cos_ti, mat, params2=params)
-    gs, gp = fr["gamma_perp"], fr["gamma_par"]
     rho = roughness_factor(f_hz, cos_ti, _roughness_sigma(mat, params),
                            roughness).to(CDTYPE)
+    if mat.is_layered:
+        # A stack reflects from every internal boundary, not just the front
+        # face, and those reflections interfere.  Returning the single
+        # interface value here would discard exactly the structure the layers
+        # were introduced to represent.
+        return multilayer_coefficients(
+            f_hz, cos_ti, mat.layers,
+            "par" if polarisation == "par" else "perp")["gamma"] * rho
+
+    fr = fresnel(f_hz, cos_ti, mat, params2=params)
+    gs, gp = fr["gamma_perp"], fr["gamma_par"]
     if polarisation == "perp":
         return gs * rho
     if polarisation == "par":
@@ -588,6 +609,164 @@ def absorption_factor(
     return torch.exp(-gamma * d)
 
 
+@dataclass(frozen=True)
+class Layer:
+    """One layer of a stratified wall: a material and a physical thickness [m]."""
+
+    material: "Material"
+    thickness: float
+
+
+def _tilted_admittance(n: torch.Tensor, cos_t: torch.Tensor,
+                       polarisation: str) -> torch.Tensor:
+    """Effective admittance of a medium for a wave crossing it at ``cos_t``.
+
+    A stratified stack is a one-dimensional transmission-line problem in the
+    direction normal to the layers, and this is the quantity that plays the
+    role of the line's characteristic admittance.  Only the normal component
+    of the wave carries power across the stack, so the admittance is tilted by
+    the propagation angle, and the two polarisations tilt oppositely:
+    ``n cos(theta)`` for the perpendicular case, where the electric field lies
+    in the interface plane and it is the magnetic field that is foreshortened,
+    and ``n / cos(theta)`` for the parallel case, where the roles swap.  At
+    normal incidence both reduce to ``n``, as they must.
+    """
+    if polarisation == "par":
+        return n / cos_t.clamp_min(1e-12) if not cos_t.is_complex() else n / cos_t
+    return n * cos_t
+
+
+def multilayer_coefficients(
+    f_hz,
+    cos_ti: torch.Tensor,
+    layers: Sequence[Layer],
+    polarisation: str = "perp",
+    exit_material: Optional["Material"] = None,
+    params: Optional[Sequence[Optional["MaterialParams"]]] = None,
+) -> Dict[str, torch.Tensor]:
+    """Exact reflection and transmission of a stratified wall.
+
+    Why a stack and not one effective slab
+    --------------------------------------
+    A real interior partition is not a homogeneous block.  A stud wall is
+    plasterboard, an air cavity, then plasterboard; a modern window is glass,
+    an air or argon gap, then glass.  Those internal boundaries each reflect,
+    and the reflections interfere, so the wall's response has a structure in
+    frequency and angle that no single effective permittivity can reproduce.
+    Averaging the layers into one slab does not merely blur that structure, it
+    removes it, and with it the resonances where a partition becomes unusually
+    transparent or unusually opaque.
+
+    The method
+    ----------
+    Because the layers are uniform in the two directions parallel to the wall,
+    the problem reduces to one dimension along the normal, and the field in
+    each layer is a forward and a backward wave.  Two matrices then describe
+    everything.  Crossing an interface mixes the two waves through the Fresnel
+    coefficients,
+
+        D = (1 / tau) * [[1, Gamma], [Gamma, 1]],
+
+    and propagating through a layer advances one wave and retards the other,
+
+        P = [[exp(+j delta), 0], [0, exp(-j delta)]],
+        delta = k0 * n * d * cos(theta),
+
+    where the signs are inverted relative to the usual optics texts because the
+    cascade below maps exit-side amplitudes back to the entrance face, so each
+    P undoes a propagation rather than performing one.  The check that settles
+    it is a layer of vacuum, which must come out as the retardation
+    ``exp(-j delta)`` and not an advance,
+
+    with ``delta`` the phase across the layer measured along the normal.  This
+    is the point where a naive ray treatment goes wrong: it is ``d cos(theta)``
+    and not the slanted ray path ``d / cos(theta)``, because what interferes is
+    the phase between successive emergences at the exit face, and the lateral
+    walk-off between them removes the rest.  Getting this backwards moves the
+    Fabry-Perot resonances the wrong way with angle.
+
+    Cascading the matrices in order gives the whole stack,
+
+        M = D_01 P_1 D_12 P_2 ... P_N D_{N,N+1},
+
+    and with no wave arriving from behind the wall the coefficients are
+
+        tau = 1 / M_00,        Gamma = M_10 / M_00.
+
+    The result is exact for a stratified medium, not an approximation, and
+    every step is a differentiable torch expression, so layer thicknesses and
+    permittivities can be recovered by the same inversion that recovers the
+    homogeneous parameters.
+
+    Reference planes
+    ----------------
+    ``tau`` is referred to the front and back faces of the stack, so it carries
+    the whole propagation delay across the wall, matching what
+    ``slab_transmission`` has always returned.  The tracer also applies
+    ``exp(-j k L)`` over a straight ray path that runs through the wall, so the
+    air-equivalent phase across the thickness is counted twice.  For the thin
+    partitions here that is a fixed offset per crossing rather than an error
+    that accumulates, and correcting it would change the meaning of a
+    coefficient the rest of the simulator already agrees on, so it is recorded
+    as a known issue rather than changed silently here.
+
+    Returns ``{"gamma", "tau"}``, the field reflection and transmission
+    coefficients referred to the front and back faces of the stack.
+    """
+    if not layers:
+        raise ValueError("a stratified wall needs at least one layer")
+    cos_ti = _t(cos_ti).to(CDTYPE) if not torch.as_tensor(cos_ti).is_complex() \
+        else torch.as_tensor(cos_ti).to(CDTYPE)
+    f = _t(f_hz)
+    k0 = (2.0 * torch.pi * f / C0).to(CDTYPE)
+
+    media = [VACUUM] + [lay.material for lay in layers] + \
+            [exit_material or VACUUM]
+    # learnable overrides apply to the layers only, never to the media in front
+    # of and behind the wall, which are air
+    pars = [None] + list(params or [None] * len(layers)) + [None]
+    if len(pars) != len(media):
+        raise ValueError("params must have one entry per layer")
+    n = [m.refractive_index(f, pj).to(CDTYPE) for m, pj in zip(media, pars)]
+    sin2_0 = 1.0 - cos_ti ** 2
+    # Snell across the whole stack at once: n0 sin(theta0) is invariant, so
+    # every layer's angle follows from the incident one.
+    cos_t = [torch.sqrt(1.0 - (n[0] / nj) ** 2 * sin2_0) for nj in n]
+    eta = [_tilted_admittance(nj, cj, polarisation) for nj, cj in zip(n, cos_t)]
+
+    def interface(i):
+        """Fresnel matrix for the boundary between medium i and medium i+1."""
+        ea, eb = eta[i], eta[i + 1]
+        g = (ea - eb) / (ea + eb)
+        tau = 2.0 * ea / (ea + eb)
+        one = torch.ones_like(g)
+        return torch.stack([torch.stack([one, g], -1),
+                            torch.stack([g, one], -1)], -2) / \
+            tau.unsqueeze(-1).unsqueeze(-1)
+
+    def propagate(j):
+        """Phase and attenuation across layer j, indexed from 1."""
+        d = _t(layers[j - 1].thickness).to(CDTYPE)
+        delta = k0 * n[j] * d * cos_t[j]
+        # A thick lossy layer makes the retarded wave's exponential overflow
+        # long after the stack has become entirely opaque.  Clamping the
+        # imaginary part at 100 nepers, which is 868 dB and far past anything
+        # physically meaningful, keeps the cascade finite without altering any
+        # result that is not already zero to machine precision.
+        delta = torch.complex(delta.real, delta.imag.clamp(-100.0, 100.0))
+        zero = torch.zeros_like(delta)
+        return torch.stack([torch.stack([torch.exp(1j * delta), zero], -1),
+                            torch.stack([zero, torch.exp(-1j * delta)], -1)], -2)
+
+    M = interface(0)
+    for j in range(1, len(layers) + 1):
+        M = M @ propagate(j) @ interface(j)
+
+    m00 = M[..., 0, 0]
+    m10 = M[..., 1, 0]
+    return {"tau": 1.0 / m00, "gamma": m10 / m00}
+
+
 def slab_transmission(
     f_hz,
     cos_ti: torch.Tensor,
@@ -605,23 +784,37 @@ def slab_transmission(
     form (an Airy / Fabry-Perot series), which is the "piecewise propagation
     applied with multiple segments contributing multiplicatively" of App. E.2.
     """
+    if mat.is_layered:
+        if not coherent:
+            raise ValueError(
+                "coherent=False has no meaning for a stratified wall: the "
+                "internal reflections are what the layers are there to model")
+        return multilayer_coefficients(f_hz, cos_ti, mat.layers, polarisation,
+                                       params=None)["tau"]
+
     d = _t(mat.thickness if thickness is None else thickness)
+    if coherent:
+        # One layer of the exact stratified solution.  Delegating rather than
+        # writing the Airy series out again keeps a single implementation of
+        # the phase across a layer, which is where the previous closed form
+        # was wrong: it used the slanted ray path d / cos(theta_t) where the
+        # interfering quantity is the normal phase d * cos(theta_t).  The two
+        # agree at normal incidence and diverge as the square of the cosine,
+        # which moved the Fabry-Perot resonances the wrong way with angle by
+        # 22 % at 70 degrees.
+        return multilayer_coefficients(
+            f_hz, cos_ti, [Layer(mat, float(d))], polarisation,
+            params=[params])["tau"]
+
+    # single-pass form, no internal reflections: here the ray path is the
+    # right length, because nothing is interfering with anything
     fr = fresnel(f_hz, cos_ti, mat, params2=params)
     if polarisation == "par":
         g, t_in = fr["gamma_par"], fr["tau_par"]
     else:
         g, t_in = fr["gamma_perp"], fr["tau_perp"]
-    cos_tt = fr["cos_tt"]
-
-    gamma = mat.propagation_constant(f_hz, params)          # alpha + j*beta
-    # oblique path length inside the slab
-    phi = gamma * d / cos_tt
-    # medium-2 -> medium-1 interface: reflection is -g, so transmission is 1-g
-    t_out = 1.0 - g
-    single = t_in * t_out * torch.exp(-phi)
-    if not coherent:
-        return single
-    return single / (1.0 - (g ** 2) * torch.exp(-2.0 * phi))
+    gamma = mat.propagation_constant(f_hz, params)
+    return t_in * (1.0 - g) * torch.exp(-gamma * d / fr["cos_tt"])
 
 
 # ---------------------------------------------------------------------------
@@ -709,16 +902,71 @@ APPROX_MATERIALS = {
                               source="approx", label="Carpet"),
 }
 
-MATERIALS: Dict[str, Material] = {"vacuum": VACUUM, **ITU_MATERIALS, **APPROX_MATERIALS}
+def layered_material(name: str, layers: Sequence[Layer], label: str = "",
+                     roughness_sigma: Optional[float] = None) -> Material:
+    """Build a stratified wall from a list of layers.
+
+    The nominal permittivity is copied from the thickest solid layer purely so
+    that reporting code asking for a single number gets a representative one.
+    The physics never uses it: reflection and transmission come from the
+    transfer-matrix solution over the whole stack.  The surface roughness
+    defaults to that of the outermost layer, which is the face a wave actually
+    meets.
+    """
+    solid = [lay for lay in layers if lay.material.name not in ("vacuum", "air")]
+    ref = max(solid or list(layers), key=lambda lay: lay.thickness).material
+    return Material(
+        name=name, a=ref.a, b=ref.b, c=ref.c, d=ref.d,
+        tan_delta=ref.tan_delta,
+        thickness=float(sum(lay.thickness for lay in layers)),
+        f_range=ref.f_range, source="layered stack",
+        label=label or name.replace("_", " ").title(),
+        roughness_sigma=(layers[0].material.roughness_sigma
+                         if roughness_sigma is None else roughness_sigma),
+        layers=tuple(layers),
+    )
+
+
+#: Stratified walls.  Each is an ordinary interior structure whose response no
+#: single effective permittivity can reproduce, because the internal boundaries
+#: reflect and those reflections interfere.  Dimensions are the common
+#: construction sizes; the cavity is treated as vacuum, which at radio
+#: frequencies air is to within a part in a thousand.
+LAYERED_MATERIALS = {
+    "drywall_partition": layered_material(
+        "drywall_partition",
+        [Layer(ITU_MATERIALS["plasterboard"], 0.0127),
+         Layer(VACUUM, 0.0900),
+         Layer(ITU_MATERIALS["plasterboard"], 0.0127)],
+        label="Stud partition (12.7 mm board, 90 mm cavity, 12.7 mm board)"),
+    "double_glazed_window": layered_material(
+        "double_glazed_window",
+        [Layer(ITU_MATERIALS["glass"], 0.004),
+         Layer(VACUUM, 0.012),
+         Layer(ITU_MATERIALS["glass"], 0.004)],
+        label="Double glazing (4 mm glass, 12 mm gap, 4 mm glass)"),
+}
+
+MATERIALS: Dict[str, Material] = {"vacuum": VACUUM, **ITU_MATERIALS,
+                                  **APPROX_MATERIALS, **LAYERED_MATERIALS}
 
 # Attach the surface heights.  Done as a separate pass rather than inline so
 # that the dielectric tables above stay a verbatim transcription of ITU-R
 # P.2040-1 Table 3, with nothing of a different provenance mixed into them.
 for _name, _sig in ROUGHNESS_SIGMA_M.items():
     MATERIALS[_name].roughness_sigma = _sig
-_missing = sorted(set(MATERIALS) - set(ROUGHNESS_SIGMA_M) - {"vacuum"})
+_missing = sorted(set(MATERIALS) - set(ROUGHNESS_SIGMA_M) - {"vacuum"}
+                  - set(LAYERED_MATERIALS))
 assert not _missing, "no roughness estimate for: %s" % (_missing,)
-del _name, _sig, _missing
+
+# A stack meets the wave with its outermost face, so it inherits that layer's
+# surface height.  Done here rather than in layered_material because the stacks
+# are constructed before the loop above has attached anything, and reading the
+# value at construction time would silently capture zero.
+for _lm in LAYERED_MATERIALS.values():
+    _lm.roughness_sigma = _lm.layers[0].material.roughness_sigma
+assert all(m.roughness_sigma > 0 for m in LAYERED_MATERIALS.values())
+del _name, _sig, _missing, _lm
 
 
 def get_material(name: str) -> Material:

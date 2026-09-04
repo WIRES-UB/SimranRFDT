@@ -136,7 +136,7 @@ Adam, optional Laplacian mesh regularisation.
 
 Both are documented at the point of implementation.
 
-### One place this implementation goes beyond the paper
+### Three places this implementation goes beyond the paper
 
 **Surface roughness.** The Fresnel coefficients of Eq. 56 assume an ideally
 smooth interface. Real building surfaces have a root-mean-square height of
@@ -152,6 +152,71 @@ reaches 2.5 for brick at 60 GHz. Experiment 7 measures what the correction
 changes, and the surface heights are differentiable so they can be fitted
 rather than trusted.
 
+**Stratified walls.** A single homogeneous slab cannot represent a real
+partition. A stud wall is plasterboard, an air cavity, then plasterboard; a
+window is glass, a gap, then glass. Each internal boundary reflects and those
+reflections interfere, giving a structure in frequency and angle that no
+effective permittivity reproduces. Walls can now be defined as a stack of
+layers, solved exactly by the Abeles characteristic matrix
+(`materials.multilayer_coefficients`), which supplies both reflection and
+transmission and is differentiable in every layer thickness and permittivity.
+
+Replacing the single-slab formula exposed a defect in it. It took the phase
+across the slab along the slanted ray path `d / cos(theta_t)`, where the
+quantity that actually interferes at the exit face is the normal component
+`d * cos(theta_t)`. The two agree exactly at normal incidence and diverge as
+the square of the cosine, so no normal-incidence check could have caught it,
+and the closed-form tests in section 5 all sit at or near normal incidence.
+The symptom was that Fabry-Perot resonances moved the **wrong way with angle**,
+by 22 % in free spectral range at 70 degrees. Correcting it changes
+through-wall transmission by up to 7.7 dB and 135 degrees of phase at oblique
+incidence. `slab_transmission` is now a single-layer call into the stratified
+solver, so there is one implementation of the layer phase rather than two.
+
+**Edge-to-edge diffraction, with the slope term.** First-order diffraction is
+a correction almost everywhere, but deep in a shadow it is not a correction to
+anything, because it is itself nearly zero there and what reaches the receiver
+has bent around two edges rather than one. Second-order diffraction is now
+available (`TracerConfig.max_diffraction_order = 2`), with the stationary
+two-edge path found by alternating exact minimisation, which converges to the
+global minimum because the total path length is jointly convex in the two edge
+parameters, and stays differentiable because the iteration is simply unrolled.
+
+Slope diffraction comes with it. Ordinary diffraction uses only the *value* of
+the incident field at the edge; the field arriving at a second edge is a
+diffracted field, and near the first edge's shadow boundary it varies rapidly
+across the second, where the derivative term is comparable in size. That
+derivative is taken by autograd on the coefficient itself, which is the one
+place where the differentiability built for inverse rendering pays off in the
+forward direction too.
+
+Three things had to be got right, and each produced a plausible wrong answer
+rather than an error:
+
+- **Edges meeting at a corner are not a cascade.** The spreading factor carries
+  `1/sqrt(s12)`, so letting both diffraction points collapse onto a shared
+  vertex sends the amplitude to infinity. That configuration is the separate
+  canonical problem of corner diffraction. Before excluding it, the spurious
+  contribution put 27 dB of invented power into an ordinary room and made an
+  indoor link beat free space.
+- **The distance parameter is not reciprocal in a cascade.** `L = s's/(s'+s)`
+  is built from the distance to the source on one side and to the observation
+  point on the other, and in a cascade those are different things in the two
+  directions of travel. The amplitude comes out symmetric on its own, so this
+  was invisible except through reciprocity, where it was worth several dB. The
+  geometric mean of the two directions restores it, the same device already
+  used for the cone angle and Luebbers' face coefficients.
+- **Masking a singularity with `torch.where` does not remove it.** The rejected
+  branch is still evaluated, and its backward pass multiplies zero by the
+  infinity from `1/sqrt(s12)`, giving NaN gradients for the whole batch while
+  the forward values stay perfectly correct. Clamping before the mask fixes it.
+
+This also exposed a latent defect in first-order diffraction: Luebbers' face
+coefficients take `sqrt(|sin(phi_i)| |sin(phi_d)|)` with the clamp applied
+after the square root rather than inside it, so a ray grazing exactly along a
+wedge face produced a NaN gradient. Single diffraction rarely lands exactly on
+that angle; cascades hit it routinely.
+
 ### Not implemented
 
 Higher-order diffraction, diffuse scattering, near-field and full-wave effects
@@ -163,7 +228,7 @@ as outside UTD validity.
 
 ## 5. Validation
 
-`python3 tests/test_rfdt.py` runs 37 checks; all pass. The substantive ones:
+`python3 tests/test_rfdt.py` runs 53 checks; all pass. The substantive ones:
 
 | Check | Result |
 |---|---|
@@ -434,7 +499,7 @@ it.
 
 1. **The metal-versus-foam comparison this study is built on is untouched.**
    Both materials happen to be smooth, so the correction cannot reach them. The
-   60 GHz power gap moved from 15.72 dB to 15.86 dB, slightly wider rather than
+   60 GHz power gap moved from 15.72 dB to 15.85 dB, slightly wider rather than
    narrower. Every 5 GHz result in experiments 2, 5 and 6 is unchanged, and
    experiment 1, the differentiability claim, is unchanged to the last digit.
 
@@ -457,6 +522,104 @@ those echoes are a specular residue rather than a predicted total return, and
 the real echo is higher by an amount this simulator cannot supply. Saying so is
 the point of the column.
 
+### Experiment 8: stratified walls, and the phase defect they exposed
+
+`results/exp8_layered_walls.{png,json}`
+
+A single homogeneous slab cannot represent a real partition. Walls can now be
+defined as a stack of layers, solved exactly by the transfer matrix.
+
+**A stack is not a slab.** Against a solid wall of the *same total thickness*,
+transmission differs by up to **7.9 dB** for a
+stud partition and **8.8 dB** for double
+glazing, with root-mean-square differences of
+4.3 and 4.4 dB
+across 1 to 12 GHz. The cavity resonances in panel (a) are structure that no
+effective permittivity can produce, and averaging the layers does not blur them,
+it deletes them. Panel (b) shows the same for reflection against angle, which
+matters more indoors: the partition has deep nulls near 19, 50 and 71 degrees
+that the solid equivalent has no trace of.
+
+**The defect this exposed.** The previous single-slab formula took the phase
+across the slab along the slanted ray path `d / cos(theta_t)`, where the
+quantity that interferes at the exit face is the normal component
+`d * cos(theta_t)`. The two agree exactly at normal incidence, and the only closed-form check that
+exercised slab transmission sat at normal incidence, so nothing could have
+caught it. The two-ray test is at 45 degrees but is a reflection off metal and
+never touches the slab path.
+Fabry-Perot resonances moved the wrong way with angle, off by 22 % in free
+spectral range at 70 degrees. The correction is worth up to
+**9.7 dB** for plasterboard,
+10.0 dB for wood and
+9.0 dB for concrete, with phase
+changes reaching 179
+degrees. Glass, at 6 mm, is thin enough that it barely notices
+(0.04 dB), which is a useful reminder
+that thickness in wavelengths is what decides.
+
+**Does it reach the robot?** The same room and the same
+115 mm of wall, layered against solid:
+
+| | Solid | Layered | Change |
+|---|---|---|---|
+| Route-mean power | -41.34 dBm | -39.94 dBm | **+1.39 dB** |
+| Delay spread | 2.53 ns | 3.29 ns | +0.76 ns |
+| Rice K-factor | 4.96 dB | 0.80 dB | **-4.16 dB** |
+| Angular spread | 28.8 deg | 42.6 deg | **+13.8 deg** |
+
+Yes, and the interesting part is which quantities move. Power changes by
+1.4 dB while the angular spread grows
+by half again and the Rice K-factor drops by
+4.2 dB. That is the same pattern
+experiment 2 found for material: the level barely notices and the shape of the
+channel changes completely. Note also that for a homogeneous wall this
+simulator's reflection is the single-interface Fresnel value and does not depend
+on thickness at all, so the entire difference above comes from the stack's
+reflection, not its transmission.
+
+### Experiment 9: edge-to-edge diffraction, and where it stops being optional
+
+`results/exp9_double_diffraction.{png,json}`
+
+Second-order diffraction is expensive, so the question is not whether it adds
+something but where it is the difference between an answer and no answer. The
+experiment measures both ends of that.
+
+**Where it is the entire answer.** Two knife edges in series in free space, with
+the transmitter below the first edge and the receiver below the second, so the
+direct path is blocked and a ray bending over the first screen alone is blocked
+by the second. At **30 of
+31** receiver heights, single-edge diffraction predicts not a
+small field but *exactly zero*; the cascade gives
+-101 to
+-80 dBm. Quoting a ratio there would be
+meaningless, since the denominator is a numerical floor rather than a
+prediction, so panel (a) plots levels and marks the region where one model has
+nothing to say.
+
+**Where it is nearly irrelevant, and why.** Inside the furnished room, along a
+transect that starts behind the partition and ends past its open end, adding the
+cascade changes the field by at most **0.95 dB**
+(0.22 dB mean in the shadowed half,
+0.52 dB where the direct path survives). The slope
+term is worth up to 0.28 dB.
+
+The reason is the more useful finding, and it was not what was expected before
+running it: **a partition inside a reflective room does not create a deep
+shadow.** Panel (c) shows both diffraction orders sitting
+17 dB below the total on average,
+and never closer than 7 dB. Wall
+reflections fill the geometric shadow in completely, so no diffraction term of
+any order can matter much there. That is why the shadowed and lit halves show
+similar changes: neither is diffraction limited.
+
+The practical consequence is that second-order diffraction is worth its
+cost, roughly fifteen to twenty times a first-order trace on this machine, in
+sparse or outdoor-like geometry, and is not worth it inside a furnished room.
+The ratio is wall-clock and moves with machine load, so it is quoted as a range
+rather than to two figures that would not reproduce. It is available and off by default for exactly
+that reason.
+
 ---
 
 ## 7. Honest limitations
@@ -466,7 +629,15 @@ the point of the column.
   and at grazing incidence. A strict unpolarised treatment needs dual-polarised
   path tracking; the `"unpolarised"` option is a documented approximation whose
   phase is taken from the TE component.
-- **First-order diffraction only**, and none from concave junctions.
+- **Second-order diffraction is off by default, on cost rather than physics.**
+  The furnished room has 36 diffracting edges and so 1260 ordered pairs, and
+  evaluating them takes about six times as long as the whole of the rest of the
+  trace. Experiment 9 turns it on and measures where it earns that.
+- **The cascade is ray-optical and its distance parameters are symmetrised, not
+  derived.** The rigorous treatment of two nearby edges is a joint coefficient
+  with a two-variable transition function, which this does not implement. Pairs
+  closer than a wavelength are rejected rather than approximated, and no
+  diffraction is computed from concave junctions.
 - **Roughness removes energy without re-radiating it.** The roughness factor
   takes power out of the specular direction, and nothing puts it back, because
   diffuse scattering is not modelled. Every roughness-enabled power is
@@ -479,6 +650,18 @@ the point of the column.
   is outside its regime. Applying a plausible-looking clothing roughness there
   would have moved the 77 GHz radar echo by more than 20 dB on the strength of
   an invented number.
+- **Layering applies to plate facets, not to closed solids.** A wall or a
+  board is a slab and can be a stack. A closed solid still uses the
+  two-interface volume model, so the partition box in the furnished room is
+  homogeneous however its material is defined.
+- **The stack coefficient carries the full propagation delay across the wall**,
+  matching what `slab_transmission` has always returned, while the tracer also
+  applies `exp(-jkL)` over a straight ray path that runs through the wall. The
+  air-equivalent phase across the thickness is therefore counted twice. For
+  thin partitions this is a fixed offset per crossing rather than an error that
+  accumulates, but it is a real inconsistency and it is recorded rather than
+  quietly changed, because correcting it would alter the meaning of a
+  coefficient the rest of the simulator already agrees on.
 - **The surface heights are estimates, not measurements.** Unlike the
   permittivities, which are ITU-R P.2040-1 regressions, the roughness values in
   `ROUGHNESS_SIGMA_M` are order-of-magnitude literature figures carrying about

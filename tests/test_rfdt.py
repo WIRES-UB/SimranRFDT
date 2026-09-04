@@ -335,6 +335,500 @@ def test_roughness_is_negligible_at_5ghz_and_material_at_60ghz():
 
 
 # ---------------------------------------------------------------------------
+# stratified walls (transfer matrix, an addition to RFDT)
+# ---------------------------------------------------------------------------
+def _lossless(eps=4.0):
+    """A lossless test dielectric, so energy checks are exact rather than close."""
+    from rfdt.materials import Material
+    return Material("lossless_test", eps, 0.0, 0.0, 0.0)
+
+
+def test_multilayer_matches_the_slab_at_normal_incidence():
+    """One layer must reproduce the homogeneous slab, phase included.
+
+    Normal incidence is where the old closed form and the transfer matrix
+    agree by construction, so this pins the interface algebra and the sign
+    convention without the phase-thickness question confusing the comparison.
+    """
+    from rfdt.materials import Layer, multilayer_coefficients
+    from rfdt.materials import Material
+    one = torch.tensor(1.0, dtype=torch.float64)
+    lossy = Material("lossy_test", 5.24, 0.0, 0.15, 0.0)
+    for mat in (_lossless(), lossy):
+        for f in (2e9, 5e9, 17e9):
+            a = complex(multilayer_coefficients(f, one, [Layer(mat, 0.02)])["tau"])
+            b = complex(slab_transmission(f, one, mat, thickness=0.02))
+            assert abs(a - b) < 1e-12, (mat.name, f, a, b)
+
+
+def test_vacuum_layer_is_a_pure_retardation():
+    """A layer of vacuum must delay the wave and do nothing else.
+
+    This is the check that fixes the sign convention.  The cascade maps
+    exit-side amplitudes back to the entrance, so each propagation matrix
+    undoes a propagation; getting that backwards returns the complex
+    conjugate, which is invisible in every magnitude-only test.
+    """
+    from rfdt.materials import Layer, multilayer_coefficients, Material
+    one = torch.tensor(1.0, dtype=torch.float64)
+    vac = Material("vac_test", 1.0, 0.0, 0.0, 0.0)
+    d = 0.03
+    t = complex(multilayer_coefficients(5e9, one, [Layer(vac, d)])["tau"])
+    expect = np.exp(-1j * 2 * np.pi * 5e9 / C0 * d)
+    assert abs(t - expect) < 1e-12, (t, expect)
+
+
+def test_resonance_spacing_uses_the_normal_phase_not_the_ray_path():
+    """Fabry-Perot spacing must follow c / (2 n d cos(theta_t)).
+
+    This is the defect the transfer matrix repairs.  What interferes inside a
+    slab is the phase between successive emergences at the exit face, which is
+    set by the normal component d*cos(theta_t); the slanted ray path
+    d/cos(theta_t) is the wrong quantity and moves the resonances the wrong way
+    with angle.  The two agree at normal incidence, so only an oblique test
+    catches it.
+    """
+    from rfdt.materials import Layer, multilayer_coefficients, fresnel
+    mat, d, n = _lossless(), 0.02, 2.0
+    freqs = np.linspace(2e9, 40e9, 3801)
+    for theta in (0.0, 50.0, 70.0):
+        ct = torch.tensor(float(np.cos(np.radians(theta))), dtype=torch.float64)
+        cos_tt = complex(fresnel(5e9, ct, mat)["cos_tt"]).real
+        mag = np.array([abs(complex(multilayer_coefficients(
+            float(f), ct, [Layer(mat, d)])["tau"])) for f in freqs])
+        i = np.arange(1, len(mag) - 1)
+        peaks = i[(mag[1:-1] > mag[:-2]) & (mag[1:-1] > mag[2:])]
+        got = float(np.mean(np.diff(freqs[peaks])))
+        want = C0 / (2.0 * n * d * cos_tt)
+        assert abs(got - want) / want < 0.01, (theta, got, want)
+
+
+def test_stratified_wall_conserves_energy_at_every_angle():
+    """A lossless stack must satisfy |Gamma|^2 + |tau|^2 = 1 exactly.
+
+    With air on both sides the admittances match, so the balance is this
+    simple, and it constrains the whole cascade at once: any error in an
+    interface coefficient, a layer phase or the matrix order breaks it.
+    """
+    from rfdt.materials import Layer, multilayer_coefficients, Material
+    stack = [Layer(_lossless(), 0.02), Layer(Material("air_t", 1.0, 0.0, 0.0, 0.0), 0.05),
+             Layer(_lossless(6.0), 0.013)]
+    for theta in (0.0, 35.0, 60.0, 80.0):
+        ct = torch.tensor(float(np.cos(np.radians(theta))), dtype=torch.float64)
+        for pol in ("perp", "par"):
+            r = multilayer_coefficients(5e9, ct, stack, pol)
+            total = (abs(complex(r["gamma"])) ** 2 + abs(complex(r["tau"])) ** 2)
+            assert abs(total - 1.0) < 1e-10, (theta, pol, total)
+
+
+def test_quarter_wave_layer_cancels_reflection_exactly():
+    """A quarter-wave layer of index sqrt(n1*n3) must reflect nothing.
+
+    An exact analytic result with a sharp answer, which makes it a far better
+    check than any approximate comparison: the two internal reflections come
+    back a half cycle apart with equal magnitude and cancel completely.  It
+    exercises the layer phase, both interfaces and the admittance tilt at once.
+    """
+    from rfdt.materials import Layer, multilayer_coefficients
+    one = torch.tensor(1.0, dtype=torch.float64)
+    n1, n3 = 1.0, 4.0
+    sub = _lossless(n3 ** 2)
+    n_coat = np.sqrt(n1 * n3)
+    coat = _lossless(n_coat ** 2)
+    d_quarter = (C0 / 5e9) / (4.0 * n_coat)
+    r = multilayer_coefficients(5e9, one, [Layer(coat, d_quarter)],
+                                exit_material=sub)
+    assert abs(complex(r["gamma"])) < 1e-12, complex(r["gamma"])
+    # and without the coating the plain Fresnel step is recovered
+    bare = multilayer_coefficients(5e9, one, [Layer(coat, 0.0)], exit_material=sub)
+    assert abs(abs(complex(bare["gamma"])) - (n3 - n1) / (n3 + n1)) < 1e-12
+
+
+def test_splitting_a_layer_changes_nothing():
+    """Cutting one layer into two halves must be invisible.
+
+    A guard against the cascade double counting an interface or dropping a
+    phase: the extra boundary it introduces is between identical media and
+    must be perfectly transparent.
+    """
+    from rfdt.materials import Layer, multilayer_coefficients
+    mat = _lossless()
+    ct = torch.tensor(0.8, dtype=torch.float64)
+    whole = multilayer_coefficients(7e9, ct, [Layer(mat, 0.02)])
+    split = multilayer_coefficients(7e9, ct, [Layer(mat, 0.01), Layer(mat, 0.01)])
+    for key in ("tau", "gamma"):
+        assert abs(complex(whole[key]) - complex(split[key])) < 1e-12, key
+
+
+def test_stratified_transmission_is_the_same_from_either_side():
+    """Reversing the stack must not change tau, even with loss.
+
+    Transmission through a stratified medium is reciprocal while reflection is
+    not, so this separates a genuine reciprocity failure from the expected
+    front-to-back asymmetry of an unsymmetric wall.
+    """
+    from rfdt.materials import Layer, multilayer_coefficients, get_material
+    stack = [Layer(get_material("glass"), 0.004),
+             Layer(get_material("vacuum"), 0.012),
+             Layer(get_material("concrete"), 0.05)]
+    ct = torch.tensor(0.75, dtype=torch.float64)
+    fwd = complex(multilayer_coefficients(5e9, ct, stack)["tau"])
+    rev = complex(multilayer_coefficients(5e9, ct, list(reversed(stack)))["tau"])
+    assert abs(fwd - rev) < 1e-12, (fwd, rev)
+
+
+def test_layered_wall_differs_from_the_equivalent_homogeneous_slab():
+    """The whole point: a stack is not reproducible by one effective slab.
+
+    If this ever stopped being true the layered machinery would be pointless,
+    so the difference is asserted rather than assumed.  A stud partition and a
+    solid block of the same total thickness are compared across the band.
+    """
+    from rfdt.materials import Layer, multilayer_coefficients, get_material
+    part = get_material("drywall_partition")
+    solid = get_material("plasterboard")
+    ct = torch.tensor(0.9, dtype=torch.float64)
+    gaps = []
+    for f in np.linspace(2e9, 8e9, 25):
+        a = abs(complex(multilayer_coefficients(float(f), ct, part.layers)["tau"]))
+        b = abs(complex(slab_transmission(float(f), ct, solid,
+                                          thickness=part.thickness)))
+        gaps.append(abs(20 * np.log10(max(a, 1e-12)) - 20 * np.log10(max(b, 1e-12))))
+    assert max(gaps) > 3.0, max(gaps)
+
+
+def test_gradients_flow_to_layer_thickness_and_permittivity():
+    """A stack must stay invertible, or the layers cannot be recovered."""
+    from rfdt.materials import Layer, multilayer_coefficients, Material, MaterialParams
+    mat = Material("grad_test", 3.0, 0.0, 0.02, 0.0)
+    p = MaterialParams.from_material(mat, 5e9)
+    ct = torch.tensor(0.85, dtype=torch.float64)
+    t = multilayer_coefficients(5e9, ct, [Layer(mat, 0.015),
+                                          Layer(get_material("vacuum"), 0.05),
+                                          Layer(mat, 0.015)],
+                                params=[p, None, p])["tau"]
+    t.abs().backward()
+    assert p.log_eps_real.grad is not None
+    assert float(p.log_eps_real.grad) != 0.0
+
+    thick = torch.tensor(0.015, dtype=torch.float64, requires_grad=True)
+    def mag(x):
+        return multilayer_coefficients(
+            5e9, ct, [Layer(mat, x)])["tau"].abs()
+    mag(thick).backward()
+    analytic = float(thick.grad)
+    h = 1e-9
+    numeric = (float(mag(0.015 + h)) - float(mag(0.015 - h))) / (2 * h)
+    assert abs(analytic - numeric) / max(abs(numeric), 1e-12) < 1e-5, (analytic, numeric)
+
+
+# ---------------------------------------------------------------------------
+# second-order (edge-to-edge) diffraction
+# ---------------------------------------------------------------------------
+def _shadow_scene():
+    """A screen between transmitter and receiver, so nothing arrives directly."""
+    mesh = scenes.plate_scene(plate_size=(3.0, 3.0), material="metal",
+                              center=(0.0, 0.0, 0.0))
+    return mesh
+
+
+def _dd_cfg(**kw):
+    """Tracer config with second-order diffraction on."""
+    base = dict(max_order=1, max_diffraction_order=2)
+    base.update(kw)
+    return TracerConfig(**base)
+
+
+def test_double_diffraction_is_reciprocal():
+    """Swapping the ends must not change a doubly diffracted field.
+
+    The strongest available check on the cascade, and it caught a real defect:
+    the amplitude comes out symmetric on its own, but the UTD distance
+    parameter does not, because it is built from the distance to the source on
+    one side and to the observation point on the other, and in a cascade those
+    are different things in the two directions.  The error was several dB and
+    was invisible to every other check.
+    """
+    mesh = scenes.furnished_room()
+    cfg = _dd_cfg()
+    a, b = (1.2, 1.2, 2.7), (4.5, 1.0, 0.9)
+    with torch.no_grad():
+        fwd = RFDTracer(mesh, cfg).trace(
+            Transmitter(a, 5e9, 20.0, Antenna("isotropic")),
+            Receiver(b, Antenna("isotropic")))
+        rev = RFDTracer(mesh, cfg).trace(
+            Transmitter(b, 5e9, 20.0, Antenna("isotropic")),
+            Receiver(a, Antenna("isotropic")))
+
+        def double_only(p):
+            idx = [i for i, kind in enumerate(p.kind) if kind.startswith("diff2")]
+            assert idx, "no doubly diffracted paths were produced"
+            return float(20 * torch.log10(
+                p.gain[:, idx].sum(-1).abs().clamp_min(1e-30)))
+
+        assert abs(double_only(fwd) - double_only(rev)) < 0.05
+        assert abs(float(fwd.power_dbm(20.0))
+                   - float(rev.power_dbm(20.0))) < 0.05
+
+
+def test_double_diffraction_rejects_edges_meeting_at_a_corner():
+    """Two edges sharing a vertex are a corner, not a cascade.
+
+    The spreading factor carries 1/sqrt(s12), so letting the two diffraction
+    points collapse onto a shared vertex sends the amplitude to infinity.  That
+    is not a numerical nuisance to be clamped away but a different canonical
+    problem, corner diffraction, which this does not implement.  Before the
+    exclusion the spurious contribution dominated everything and put 27 dB of
+    invented power into a simple room.
+    """
+    mesh = scenes.furnished_room()
+    tracer = RFDTracer(mesh, _dd_cfg())
+    wedges = [w for w in mesh.wedges()
+              if w.n_index >= tracer.cfg.min_wedge_index]
+    tx = Transmitter((1.2, 1.2, 2.7), 5e9, 20.0, Antenna("isotropic"))
+    rx_pos = torch.tensor([[4.5, 1.0, 0.9]], dtype=torch.float64)
+    for wa, wb in tracer._double_candidates(tx, rx_pos, wedges):
+        assert not ({wa.v0, wa.v1} & {wb.v0, wb.v1}), (wa, wb)
+
+    # and the power must stay physical: a 3.5 m indoor link cannot beat free
+    # space, which is what the singular pairs made it do
+    with torch.no_grad():
+        p = RFDTracer(mesh, _dd_cfg()).trace(
+            tx, Receiver((4.5, 1.0, 0.9), Antenna("isotropic")))
+    d = float((torch.tensor([4.5, 1.0, 0.9], dtype=torch.float64)
+               - tx.position).norm())
+    friis = 20.0 - 20.0 * np.log10(4.0 * np.pi * d * 5e9 / C0)
+    assert float(p.power_dbm(20.0)) < friis + 6.0, (float(p.power_dbm(20.0)), friis)
+
+
+def test_double_diffraction_gradients_are_finite_and_flow_to_geometry():
+    """The cascade must stay differentiable, which is the point of all this.
+
+    Two traps are checked at once.  Masking the degenerate separation with
+    torch.where does not stop the rejected branch being evaluated, and its
+    backward pass multiplies zero by the infinity from 1/sqrt(s12), giving NaN
+    for the whole batch while the forward values stay perfectly correct.  And
+    the slope term's derivative has to be taken without detaching the angle,
+    or the main term silently loses its dependence on the scene.
+    """
+    mesh = scenes.furnished_room()
+    tx = Transmitter((1.2, 1.2, 2.7), 5e9, 20.0, Antenna("isotropic"))
+    rx = Receiver((4.5, 1.0, 0.9), Antenna("isotropic"))
+    v = mesh.vertices.clone().requires_grad_(True)
+    p = RFDTracer(mesh, _dd_cfg()).trace(tx, rx, vertices=v)
+    idx = [i for i, kind in enumerate(p.kind) if kind.startswith("diff2")]
+    assert idx
+    p.gain[:, idx].sum().abs().backward()
+    assert v.grad is not None
+    assert bool(torch.isfinite(v.grad).all()), "NaN gradient from the cascade"
+    assert float(v.grad.abs().sum()) > 0.0
+
+
+def test_double_diffraction_works_without_a_gradient_graph():
+    """A plain forward evaluation must not need autograd to succeed.
+
+    The slope term differentiates the coefficient, and under torch.no_grad
+    there is no graph to differentiate, so the derivative is taken with
+    respect to an added zero perturbation instead.  Without that this raises
+    rather than returning an answer, which would break every caller that
+    evaluates the forward model inside no_grad.
+    """
+    mesh = scenes.furnished_room()
+    tx = Transmitter((1.2, 1.2, 2.7), 5e9, 20.0, Antenna("isotropic"))
+    rx = Receiver((4.5, 1.0, 0.9), Antenna("isotropic"))
+    with torch.no_grad():
+        p = RFDTracer(mesh, _dd_cfg(enable_slope_diffraction=True)).trace(tx, rx)
+    assert np.isfinite(float(p.power_dbm(20.0)))
+
+
+def test_slope_diffraction_changes_the_answer_and_stays_finite():
+    """The slope term must contribute, and must not run away.
+
+    Ordinary diffraction uses only the value of the incident field at the
+    edge.  When the second edge sits near the first one's shadow boundary that
+    field varies rapidly across it and the derivative term is comparable, so a
+    term that changed nothing would mean it was not being applied.
+    """
+    mesh = scenes.furnished_room()
+    tx = Transmitter((1.2, 1.2, 2.7), 5e9, 20.0, Antenna("isotropic"))
+    rx = Receiver((4.5, 1.0, 0.9), Antenna("isotropic"))
+
+    def double_sum(slope):
+        with torch.no_grad():
+            p = RFDTracer(mesh, _dd_cfg(enable_slope_diffraction=slope)).trace(tx, rx)
+        idx = [i for i, kind in enumerate(p.kind) if kind.startswith("diff2")]
+        return float(20 * torch.log10(
+            p.gain[:, idx].sum(-1).abs().clamp_min(1e-30)))
+
+    with_slope, without = double_sum(True), double_sum(False)
+    assert np.isfinite(with_slope) and np.isfinite(without)
+    assert abs(with_slope - without) > 0.05, (with_slope, without)
+    assert abs(with_slope - without) < 20.0, (with_slope, without)
+
+
+def test_double_diffraction_adds_energy_rather_than_removing_it():
+    """Second order can only add paths, so the total cannot fall.
+
+    A weak check individually, but it catches a sign or bookkeeping error that
+    would make the cascade subtract from the first-order field, and it is
+    almost free to run.
+    """
+    mesh = scenes.furnished_room()
+    tx = Transmitter((1.2, 1.2, 2.7), 5e9, 20.0, Antenna("isotropic"))
+    rx = Receiver((4.5, 1.0, 0.9), Antenna("isotropic"))
+    with torch.no_grad():
+        one = RFDTracer(mesh, TracerConfig(max_order=1,
+                                           max_diffraction_order=1)).trace(tx, rx)
+        two = RFDTracer(mesh, _dd_cfg()).trace(tx, rx)
+    assert two.n_paths() > one.n_paths()
+    order = torch.as_tensor(two.order)
+    assert int((order == 2).sum()) > 0
+
+
+# ---------------------------------------------------------------------------
+# the exact validity weight (an addition to RFDT)
+# ---------------------------------------------------------------------------
+def test_modified_fresnel_matches_its_defining_properties():
+    """The exact transition function, pinned by three independent identities.
+
+    It is easy to confuse with the UTD transition function next to it in the
+    same module, and they are different: this one is a signed step through one
+    half, that one is even and vanishes at the boundary.
+    """
+    from rfdt.transition import modified_fresnel
+    half = complex(modified_fresnel(torch.tensor(0.0, dtype=torch.float64)))
+    assert abs(half - 0.5) < 1e-12, half
+    assert abs(complex(modified_fresnel(torch.tensor(30.0, dtype=torch.float64))) - 1.0) < 1e-2
+    assert abs(complex(modified_fresnel(torch.tensor(-30.0, dtype=torch.float64)))) < 1e-2
+    # F(a) + F(-a) = 1 exactly, for every a
+    for a in (0.3, 1.0, 2.5, 7.0):
+        s_p = complex(modified_fresnel(torch.tensor(a, dtype=torch.float64)))
+        s_m = complex(modified_fresnel(torch.tensor(-a, dtype=torch.float64)))
+        assert abs(s_p + s_m - 1.0) < 1e-12, (a, s_p + s_m)
+
+
+def test_fresnel_argument_agrees_with_the_utd_one_where_it_matters():
+    """``s = sign(x) sqrt(|x|)`` near a boundary, and monotone away from it.
+
+    Two properties, and they pull in different directions.  Close to a
+    boundary, which is the whole transition region, the exact argument must be
+    the signed square root of the UTD one, since that is what makes them the
+    same quantity.  Far from one they must part company: the UTD form needs its
+    angular offset clamped to keep ``a`` monotone, which caps the argument, so
+    the weight would saturate near 0.98 instead of 1 and lose a few percent at
+    every bounce of every path.  Across a furnished room that cost 2.8 dB.
+    """
+    from rfdt import transition as tf
+    L = torch.tensor(0.7, dtype=torch.float64)
+    k = 2 * np.pi * 5e9 / C0
+
+    # near the boundary the two agree
+    for d in (-0.02, -0.002, 0.002, 0.02):
+        d_t = torch.tensor(d, dtype=torch.float64)
+        x = float(tf.edge_argument(d_t, L, k))
+        got = float(tf.edge_argument_fresnel(d_t, L, k))
+        want = np.sign(x) * np.sqrt(abs(x))
+        assert abs(got - want) / max(abs(want), 1e-12) < 1e-3, (d, got, want)
+
+    # far from it the exact argument keeps growing, so the weight reaches 1
+    args = [float(tf.edge_argument_fresnel(
+        torch.tensor(d, dtype=torch.float64), L, k)) for d in (0.5, 1.0, 2.0, 4.0)]
+    assert all(b > a for a, b in zip(args, args[1:])), args
+    far = tf.weight_fresnel(tf.edge_argument_fresnel(
+        torch.tensor(50.0, dtype=torch.float64), L, k))
+    assert abs(abs(complex(far)) - 1.0) < 0.01, complex(far)
+
+
+def test_exact_weight_gives_half_the_field_at_a_reflection_boundary():
+    """A reflected field must be exactly half its infinite-plane value there.
+
+    This is not a convention or a tolerance, it is what the exact solution
+    says, and it is the single clearest statement of the difference between the
+    two weights: the UTD one gives zero here, and with its diffraction term
+    added the total is still 24 dB low.
+    """
+    from rfdt.materials import get_material, reflection_coefficient
+    tx = Transmitter((0.0, 0.0, 1.0), 5e9, 20.0, Antenna("isotropic"))
+    rx = Receiver((2.0, 0.0, 1.0), Antenna("isotropic"))
+    lam = C0 / 5e9
+    gamma = abs(complex(reflection_coefficient(
+        5e9, torch.tensor(1 / np.sqrt(2.0), dtype=torch.float64),
+        get_material("metal"), "perp")))
+    geometric = lam / (4 * np.pi * np.sqrt(8.0)) * gamma
+
+    def scattered(weighting, diffraction):
+        # plate half-width 1.0 puts the specular point exactly on the edge
+        mesh = scenes.plate_scene(plate_size=(2.0, 8.0), material="metal")
+        cfg = TracerConfig(max_order=1, weighting=weighting,
+                           enable_diffraction=diffraction, max_diffraction_order=1)
+        with torch.no_grad():
+            p = RFDTracer(mesh, cfg).trace(tx, rx)
+        idx = [i for i, kind in enumerate(p.kind) if kind != "los"]
+        return abs(complex(p.gain[0, idx].sum())) / geometric
+
+    assert abs(scattered("fresnel", False) - 0.5) < 1e-6
+    assert scattered("rfdt", False) < 1e-9            # weight is zero there
+    assert scattered("rfdt", True) < 0.1              # and diffraction cannot save it
+
+
+def test_exact_weight_has_a_gradient_where_the_utd_weight_has_none():
+    """The failure the smooth weight exists to remove, present in the weight itself.
+
+    The UTD weight is even in the signed argument and clamped to zero on the
+    shadow side, so over that whole region it is identically zero and so is its
+    derivative.  A method introduced to eliminate exactly-zero gradients should
+    not contain one.
+    """
+    from rfdt import transition as tf
+    for s_val in (-3.0, -1.0, -0.3):
+        s_t = torch.tensor(s_val, dtype=torch.float64, requires_grad=True)
+        we = tf.weight_fresnel(s_t).abs()
+        ge = torch.autograd.grad(we, s_t)[0]
+        assert float(we) > 1e-3, (s_val, float(we))
+        assert abs(float(ge)) > 1e-3, (s_val, float(ge))
+
+        x_t = torch.tensor(-s_val * s_val, dtype=torch.float64, requires_grad=True)
+        wu = tf.weight_rfdt(x_t).abs()
+        gu = torch.autograd.grad(wu, x_t)[0]
+        assert float(wu) == 0.0 and float(gu) == 0.0, (s_val, float(wu), float(gu))
+
+
+def test_exact_weight_is_continuous_and_differentiable_without_diffraction():
+    """It must do the paper's job unaided, or it is not a replacement.
+
+    RFDT needs a diffraction term to make the field continuous across an edge.
+    The exact weight has to manage that alone, and its gradient with respect to
+    reflector size, which no binary test can produce at all, has to stay right.
+    """
+    field = _edge_sweep("fresnel", False)
+    jump = float(field.diff().abs().max())
+    span = float(field.max() - field.min())
+    assert jump / span < 0.01, jump / span
+
+    tx = Transmitter((0.0, 0.0, 1.0), 5e9, 20.0, Antenna("isotropic"))
+    rx = Receiver((0.35, 0.0, 1.0), Antenna("isotropic"))
+    cfg = TracerConfig(max_order=1, weighting="fresnel", enable_diffraction=False)
+
+    def power(scale_val, grad):
+        mesh = scenes.plate_scene(plate_size=(1.0, 1.0), material="metal")
+        sc = torch.tensor(scale_val, dtype=torch.float64, requires_grad=grad)
+        v = mesh.vertices * torch.stack(
+            [sc, sc, torch.ones((), dtype=torch.float64)])
+        return RFDTracer(mesh, cfg).trace(tx, rx, vertices=v).field().abs().sum(), sc
+
+    val, sc = power(1.0, True)
+    val.backward()
+    analytic = float(sc.grad)
+    h = 1e-5
+    with torch.no_grad():
+        hi, _ = power(1.0 + h, False)
+        lo, _ = power(1.0 - h, False)
+    numeric = (float(hi) - float(lo)) / (2 * h)
+    assert abs(analytic) > 1e-6, analytic
+    assert abs(analytic - numeric) / abs(numeric) < 1e-5, (analytic, numeric)
+
+
+# ---------------------------------------------------------------------------
 # geometry and mesh structure
 # ---------------------------------------------------------------------------
 def test_welding_produces_correct_wedge_indices():

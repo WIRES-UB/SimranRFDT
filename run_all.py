@@ -38,6 +38,10 @@ EXPERIMENTS = {
         "metal against foam head to head, the two extremes of experiment 2"),
     7: ("exp7_roughness",
         "surface roughness added to the Fresnel coefficient, and its effect"),
+    8: ("exp8_layered_walls",
+        "stratified walls by transfer matrix, and the oblique phase fix"),
+    9: ("exp9_double_diffraction",
+        "edge-to-edge diffraction and the slope term, in deep shadow"),
 }
 
 
