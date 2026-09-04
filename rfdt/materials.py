@@ -986,3 +986,82 @@ MATERIAL_CATEGORIES = {
     "human": ["human_body"],
     "low_density": ["foam_board", "paper_board", "plastic_board", "carpet"],
 }
+
+# ---------------------------------------------------------------------------
+# diffuse scattering (an addition to RFDT, not part of the paper)
+# ---------------------------------------------------------------------------
+def scattering_coefficient(f_hz, cos_ti: torch.Tensor, sigma_h,
+                           model: str = "miller_brown") -> torch.Tensor:
+    """Fraction of field amplitude that leaves the specular direction.
+
+    Tied to the surface roughness rather than fitted independently.  The
+    roughness factor already says what fraction of the *power* survives in the
+    specular direction, namely ``rho**2``, and the rest does not vanish: it is
+    scattered.  Energy conservation then fixes the scattering coefficient with
+    no new free parameter at all,
+
+        S**2 = 1 - rho**2.
+
+    That link matters for more than tidiness.  Fitting ``S`` separately would
+    add a second unmeasured per-material quantity beside the surface height,
+    which is already the weakest input in the library, and would let the two
+    absorb each other's errors during an inversion.  Tying them means the
+    roughness estimate is the only thing being trusted, and it is the thing
+    that can be recovered from data.
+    """
+    rho = roughness_factor(f_hz, cos_ti, sigma_h, model)
+    return torch.sqrt((1.0 - rho ** 2).clamp_min(0.0))
+
+
+def _lobe_normalisation_table(alpha: float, n_theta: int = 181,
+                              n_quad: int = 4000):
+    """``F_alpha(theta_spec)``, the solid-angle integral of the lobe.
+
+    The scattering lobe is ``((1 + cos psi) / 2) ** alpha`` about the specular
+    direction, and the amplitude has to be normalised by its integral over the
+    hemisphere or the model radiates whatever power the lobe happens to
+    contain.  That integral depends on how far the specular direction is tilted
+    from the surface normal, because a tilted lobe has part of itself below the
+    horizon and so radiates less.  Ignoring that and using the normal-incidence
+    value would over-normalise at grazing, scattering too little exactly where
+    rough surfaces scatter most.
+
+    Tabulated once against the specular elevation and interpolated, since it
+    depends on nothing else.  The quadrature is a spiral over the hemisphere,
+    which needs no pole handling and converges quickly.
+    """
+    i = torch.arange(n_quad, dtype=FDTYPE) + 0.5
+    cos_t = 1.0 - i / n_quad                 # uniform in cos(theta), z >= 0
+    sin_t = torch.sqrt((1.0 - cos_t ** 2).clamp_min(0.0))
+    # golden-angle spiral: no poles to special-case, and it converges fast
+    phi = i * (torch.pi * (3.0 - 5.0 ** 0.5))
+    dirs = torch.stack([sin_t * torch.cos(phi), sin_t * torch.sin(phi), cos_t], -1)
+    d_omega = 2.0 * torch.pi / n_quad        # equal-area samples
+
+    thetas = torch.linspace(0.0, torch.pi / 2, n_theta, dtype=FDTYPE)
+    out = []
+    for th in thetas:
+        spec = torch.tensor([float(torch.sin(th)), 0.0, float(torch.cos(th))],
+                            dtype=FDTYPE)
+        cos_psi = (dirs * spec).sum(-1).clamp(-1.0, 1.0)
+        lobe = ((1.0 + cos_psi) / 2.0) ** alpha
+        out.append((lobe * d_omega).sum())
+    return thetas, torch.stack(out)
+
+
+_LOBE_CACHE: Dict[float, Tuple[torch.Tensor, torch.Tensor]] = {}
+
+
+def lobe_normalisation(alpha: float, cos_theta_spec: torch.Tensor) -> torch.Tensor:
+    """Interpolated ``F_alpha`` for the given specular elevation."""
+    key = float(alpha)
+    if key not in _LOBE_CACHE:
+        _LOBE_CACHE[key] = _lobe_normalisation_table(key)
+    thetas, values = _LOBE_CACHE[key]
+    theta = torch.arccos(torch.as_tensor(cos_theta_spec, dtype=FDTYPE)
+                         .clamp(0.0, 1.0))
+    idx = torch.searchsorted(thetas, theta.reshape(-1).contiguous()).clamp(1, len(thetas) - 1)
+    t0, t1 = thetas[idx - 1], thetas[idx]
+    v0, v1 = values[idx - 1], values[idx]
+    frac = ((theta.reshape(-1) - t0) / (t1 - t0).clamp_min(1e-12)).clamp(0.0, 1.0)
+    return (v0 + frac * (v1 - v0)).reshape(theta.shape)

@@ -53,6 +53,7 @@ from .antennas import Receiver, Transmitter
 from .geometry import (Mesh, Surface, Wedge, as_t, intersect_plane, mirror,
                        normalize, supporting_plane, surface_edge_distance)
 from .materials import (C0, Material, MaterialParams, absorption_factor,
+                        lobe_normalisation, scattering_coefficient,
                         fresnel, get_material, interface_transmission,
                         reflection_coefficient, slab_transmission)
 
@@ -135,6 +136,17 @@ class TracerConfig:
     #: 25, 4e-5 dB at 50.  The Fermat solve is cheap next to the coefficients,
     #: so buying accuracy here costs little.
     double_diffraction_iterations: int = 25
+    #: radiate the energy that surface roughness removes from the specular
+    #: direction, instead of deleting it.  Off by default only because it is
+    #: new and costs a patch sum per facet; it is not optional physics once
+    #: roughness is enabled, since without it the simulator loses up to 95 per
+    #: cent of a rough surface's power at millimetre wave.
+    enable_diffuse: bool = False
+    #: scattering patches per axis on each facet, so this squared per facet
+    diffuse_patches: int = 5
+    #: directivity of the scattering lobe about the specular direction.  Larger
+    #: is more forward-scattering; 4 is a common choice for building surfaces.
+    diffuse_alpha: float = 4.0
     #: minimum separation between the two diffraction points, in wavelengths.
     #: The ray-optical cascade needs the second edge to lie in the far field of
     #: the first, and it fails hard rather than gracefully when it does not:
@@ -1071,6 +1083,157 @@ class RFDTracer:
         return keep
 
     # ------------------------------------------------------------------
+    # diffuse scattering
+    # ------------------------------------------------------------------
+    def _facet_patches(self, si: int, n_per_axis: int, vertices=None):
+        """Patch centres and per-patch area covering facet ``si``.
+
+        A regular grid over the facet's in-plane bounding box, keeping the
+        cells whose centre lies inside the outline.  Crude on purpose: the
+        diffuse field is a sum of many small contributions whose phases spread
+        over many wavelengths, so it is insensitive to exactly where the
+        samples sit, and a quadrature clever enough to matter would be a
+        quadrature slow enough to notice.
+
+        Uses the same signed edge distance as the validity weight, so it is
+        exact for the convex outlines the scene builders produce and
+        conservative for a reflex corner, in the same way and for the same
+        reason.
+        """
+        p0, n = self._plane(si, vertices)
+        bnd = self._boundary(si, vertices).reshape(-1, 3)
+        ref = bnd[1] - bnd[0]
+        u = normalize(ref - (ref * n).sum() * n)
+        w = torch.cross(n, u, dim=-1)
+        rel = bnd - p0
+        cu, cw = (rel * u).sum(-1), (rel * w).sum(-1)
+        m = int(max(1, n_per_axis))
+        step = (torch.arange(m, dtype=FDTYPE) + 0.5) / m
+        gu = cu.min() + step * (cu.max() - cu.min())
+        gw = cw.min() + step * (cw.max() - cw.min())
+        area = ((cu.max() - cu.min()) * (cw.max() - cw.min())) / (m * m)
+        uu, ww = torch.meshgrid(gu, gw, indexing="ij")
+        pts = (p0 + uu.reshape(-1, 1) * u + ww.reshape(-1, 1) * w)
+        inside = self._edge_distance(pts, si, vertices)[0] > 0
+        return pts[inside], area
+
+    def _diffuse(self, tx: Transmitter, rx_pos: torch.Tensor, rx: Receiver,
+                 si: int, vertices=None, mat_overrides=None):
+        """Energy scattered off facet ``si`` away from the specular direction.
+
+        Surface roughness removes power from the specular direction, and that
+        power is scattered, not absorbed.  Modelling the removal without the
+        return is not a small approximation: at 77 GHz it deletes 95 per cent of
+        a concrete wall's reflected power.  This puts it back.
+
+        Each patch re-radiates with a lobe about the specular direction, and the
+        amplitude follows from conservation rather than from a fitted constant.
+        The power intercepted by a patch is its area times the incident power
+        density times the obliquity, a fraction ``S**2`` of that is scattered,
+        and spreading it over the lobe gives
+
+            |E_s| = S |E_i| sqrt(dA cos / F_alpha) sqrt(lobe) / r2,
+
+        where ``F_alpha`` is the lobe's solid-angle integral.  Normalising by
+        that integral, rather than by its normal-incidence value, is what keeps
+        the model conservative when the specular direction is tilted and part of
+        the lobe falls below the horizon.
+
+        Two choices keep this reciprocal.  The obliquity is the geometric mean
+        of the incident and scattered cosines rather than the incident one
+        alone, and the scattering coefficient is evaluated at that same
+        symmetric cosine.  The lobe needs no such treatment: it is symmetric
+        already, because reversing a path about a specular direction leaves the
+        angle from it unchanged.
+
+        Phases are the true path lengths, so the patches interfere rather than
+        being added as powers.  That is what gives the diffuse field its delay
+        spread, which is the whole reason it matters for a channel model.
+        """
+        k, lam, f_hz = tx.k, tx.wavelength, tx.frequency
+        R = rx_pos.shape[0]
+        pts, area = self._facet_patches(si, self.cfg.diffuse_patches, vertices)
+        if pts.numel() == 0:
+            return None
+        _, n = self._plane(si, vertices)
+        p_tx = tx.position.reshape(1, 3)
+
+        q = pts.reshape(1, -1, 3)                       # (1, P, 3)
+        d_in = q - p_tx.reshape(1, 1, 3)
+        r1 = d_in.norm(dim=-1).clamp_min(1e-6)
+        u_in = d_in / r1.unsqueeze(-1)
+        d_out = rx_pos.reshape(R, 1, 3) - q
+        r2 = d_out.norm(dim=-1).clamp_min(1e-6)
+        u_out = d_out / r2.unsqueeze(-1)
+
+        cos_i = -(u_in * n).sum(-1)                     # positive if illuminated
+        cos_s = (u_out * n).sum(-1)                     # positive if visible
+        lit = (cos_i > 1e-6) & (cos_s > 1e-6)
+        if not bool(lit.any()):
+            return None
+        cos_sym = torch.sqrt((cos_i.clamp_min(1e-6) * cos_s.clamp_min(1e-6)))
+
+        spec = u_in + 2.0 * cos_i.unsqueeze(-1) * n     # mirror of the incoming ray
+        cos_psi = (u_out * spec).sum(-1).clamp(-1.0, 1.0)
+        lobe = ((1.0 + cos_psi) / 2.0).clamp_min(0.0) ** self.cfg.diffuse_alpha
+        params = self._params_for(si, mat_overrides)
+        sigma = (params.roughness if params is not None
+                 and params.roughness is not None
+                 else self.material(si).roughness_sigma)
+
+        # Energy conservation and reciprocity pull in opposite directions here,
+        # and they do it twice.  Conservation fixes the normalisation from the
+        # incident side alone: the patch intercepts a power set by cos_i, keeps
+        # a fraction S(cos_i)**2 of it, and spreads that over a lobe whose
+        # integral is F(cos_i).  Every one of those is a property of the
+        # incident direction, so the resulting amplitude is not symmetric under
+        # swapping transmitter and receiver, and using it costs about 0.2 dB of
+        # reciprocity.  Evaluating them at the symmetric cosine instead is
+        # reciprocal and loses about 8 per cent of the scattered energy.
+        #
+        # Taking the geometric mean of the two normalisations is exactly
+        # reciprocal by construction, since swapping the ends swaps the two
+        # factors, and it conserves energy exactly whenever the two directions
+        # agree.  This is the same device already used for the cone angle, for
+        # Luebbers' face coefficients and for the cascade distance parameter,
+        # and like those it is a symmetrisation rather than a derivation.
+        def side(cos_a):
+            c = cos_a.clamp(1e-6, 1.0)
+            S = scattering_coefficient(f_hz, c, sigma, self.cfg.surface_roughness)
+            F = lobe_normalisation(self.cfg.diffuse_alpha, c).clamp_min(1e-12)
+            return S * torch.sqrt((area * c / F).clamp_min(0.0))
+
+        weight = torch.sqrt((side(cos_i) * side(cos_s)).clamp_min(0.0))
+
+        e_inc = (lam / (4.0 * np.pi * r1)) * tx.antenna.field_gain(
+            u_in.reshape(-1, 3)).reshape(r1.shape)
+        amp = (e_inc * weight * torch.sqrt(lobe) / r2
+               * rx.antenna.field_gain(-u_out.reshape(-1, 3)).reshape(r2.shape))
+        amp = torch.where(lit, amp, torch.zeros_like(amp))
+        L_tot = r1 + r2
+        gain = amp.to(CDTYPE) * torch.exp(-1j * (k * L_tot).to(CDTYPE))
+
+        # both legs must reach the patch: a scattering point the transmitter
+        # cannot see, or the receiver cannot see, contributes nothing
+        P = pts.shape[0]
+        qe = pts.reshape(1, -1, 3).expand(R, P, 3).reshape(-1, 3)
+        txe = p_tx.expand(R * P, 3)
+        rxe = rx_pos.reshape(R, 1, 3).expand(R, P, 3).reshape(-1, 3)
+        w1 = self._segment_weight(txe, qe, k, (si,), vertices, mat_overrides)
+        w2 = self._segment_weight(qe, rxe, k, (si,), vertices, mat_overrides)
+        gain = gain * (w1 * w2).reshape(R, P)
+
+        u_in_b = u_in.expand(R, P, 3)
+        nodes = torch.stack([p_tx.expand(R, 3).reshape(R, 1, 3).expand(R, P, 3),
+                             pts.reshape(1, P, 3).expand(R, P, 3),
+                             rx_pos.reshape(R, 1, 3).expand(R, P, 3)], dim=-2)
+        return Paths(gain, L_tot.expand(R, P), L_tot.expand(R, P) / C0,
+                     u_in_b, u_out,
+                     torch.ones(P, dtype=torch.long),
+                     [f"diffuse-{si}-{i}" for i in range(P)],
+                     [nodes[:, i] for i in range(P)])
+
+    # ------------------------------------------------------------------
     # public API
     # ------------------------------------------------------------------
     def trace(self, tx: Transmitter, rx: Receiver,
@@ -1117,6 +1280,12 @@ class RFDTracer:
                                                       vertices):
                     families.append(self._double_diffraction(
                         tx, rx_pos, rx, wa, wb, vertices, mat_overrides))
+
+        if self.cfg.enable_diffuse:
+            for si in range(len(self.surfaces)):
+                fam = self._diffuse(tx, rx_pos, rx, si, vertices, mat_overrides)
+                if fam is not None:
+                    families.append(fam)
         return _cat_paths(families)
 
     @staticmethod

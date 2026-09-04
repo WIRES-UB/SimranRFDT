@@ -97,6 +97,38 @@ took the phase along the slanted ray path `d/cos(theta_t)` instead of the
 normal `d cos(theta_t)`, worth up to 10 dB at oblique incidence and invisible
 to every existing test because they all sat at normal incidence.
 
+### Gap 5. No diffuse scattering
+
+Every reflection was specular, so delay spreads were underestimates and Rice
+K-factors overestimates. Fixing gap 4 made it worse: the roughness term removes
+energy from the specular direction and nothing put it back, so at 77 GHz over 96
+percent of concrete's and brick's specular power was simply deleted.
+
+**Fixed by** re-radiating that energy with a lobe about the specular direction,
+with the scattering coefficient tied to the roughness by conservation,
+`S**2 = 1 - rho**2`, so no second unmeasured parameter is introduced beside the
+surface height. The amplitude follows from conservation rather than a fitted
+constant, and is normalised by the lobe's solid-angle integral computed for the
+actual specular elevation, not its normal-incidence value, which is what keeps
+it conservative when part of the lobe falls below the horizon. Patch phases are
+true path lengths, so the patches interfere rather than being summed as powers.
+
+**Difference:** at 60 GHz on the robot route, metal is untouched at +0.14 dB,
+which is the control, since a smooth surface scatters nothing. Concrete gains
+10.00 dB and foam board 10.57 dB, with the Rice K-factor falling by 14.4 and
+15.7 dB and the angular spread rising by 13.6 and 15.9 degrees. That is the
+energy gap 4 was deleting, recovered.
+
+**Still open inside it.** Conservation fixes the normalisation from the incident
+side alone and is not symmetric under swapping the ends, while the symmetrised
+version is exactly reciprocal and radiates less, because it suppresses grazing
+directions where the two disagree most. Reciprocity is a theorem, so that is the
+property held exact, and the cost is a measured energy deficit that depends only
+on the lobe width: 1.72 dB at alpha 1, 0.96 dB at the default alpha 4, 0.34 dB at
+alpha 16, 0.17 dB at alpha 32. A rigorous fix needs a scattering model whose
+normalisation is symmetric by construction rather than symmetrised afterwards.
+See also gap 19.
+
 ### Gap 17. No reference with a width
 
 The half plane is exact but has no width parameter, and width is the exact
@@ -159,15 +191,6 @@ residual diffraction term whose correct form is underived. See gap 11.
 ---
 
 ## Open
-
-### Gap 5. No diffuse scattering
-
-Every reflection is specular, so delay spreads are underestimates and Rice
-K-factors overestimates. Fixing gap 4 made this worse rather than better: the
-roughness term removes energy from the specular direction and nothing puts it
-back, so at 77 GHz over 96 percent of concrete's and brick's specular power is
-deleted with no diffuse term to receive it. The most pressing engineering item,
-because gap 4 created the imbalance.
 
 ### Gap 6. Scalar polarisation
 
@@ -254,7 +277,19 @@ fittable, not closed.
 
 ---
 
+### Gap 19. Diffuse scattering is first order only
+
+A facet scatters the field arriving directly from the transmitter. It does not
+scatter what arrives by reflection, and a diffuse contribution cannot then go on
+to reflect or diffract. In a closed reflective room those higher-order terms are
+not obviously negligible, and nothing here bounds them.
+
+---
+
 ## Tally
 
-Five closed (2, 3, 4, 7, 17), one closed for a free edge (1), twelve open
-(5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18).
+Six closed (2, 3, 4, 5, 7, 17), one closed for a free edge (1), twelve open
+(6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19).
+
+Two of the open ones exist because a fix created them: gap 5 was made worse by
+gap 4 before being closed, and gap 19 is the residue of closing it.

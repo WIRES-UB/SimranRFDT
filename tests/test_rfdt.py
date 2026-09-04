@@ -934,6 +934,145 @@ def test_exact_weight_beats_the_utd_one_against_the_strip_solver():
 
 
 # ---------------------------------------------------------------------------
+# diffuse scattering (an addition to RFDT)
+# ---------------------------------------------------------------------------
+def test_scattering_coefficient_is_tied_to_the_roughness():
+    """S**2 = 1 - rho**2, so no second unmeasured parameter is introduced.
+
+    The roughness factor already says what fraction of the power survives in
+    the specular direction; the rest is scattered, not absorbed.  Fitting S
+    separately would add a free parameter beside the surface height, which is
+    already the weakest input in the library, and let the two absorb each
+    other's errors during an inversion.
+    """
+    from rfdt.materials import scattering_coefficient, roughness_factor
+    c = torch.tensor(0.8, dtype=torch.float64)
+    for name in ("metal", "foam_board", "concrete", "brick"):
+        sigma = get_material(name).roughness_sigma
+        for f in (5e9, 60e9, 77e9):
+            rho = float(roughness_factor(f, c, sigma))
+            S = float(scattering_coefficient(f, c, sigma))
+            assert abs(S ** 2 + rho ** 2 - 1.0) < 1e-12, (name, f)
+    # a smooth surface scatters nothing at all
+    assert float(scattering_coefficient(5e9, c, 0.0)) == 0.0
+
+
+def test_lobe_normalisation_matches_its_closed_form():
+    """At normal incidence the integral is 4 pi (1 - 2^-(a+1)) / (a+1).
+
+    Getting this wrong scales every scattered field by a constant, which no
+    relative comparison would reveal, so it is checked against the analytic
+    value rather than against itself.  Tilting the lobe must then reduce it,
+    because part of it falls below the horizon.
+    """
+    from rfdt.materials import lobe_normalisation
+    for alpha in (2.0, 4.0, 8.0):
+        got = float(lobe_normalisation(alpha, torch.tensor(1.0, dtype=torch.float64)))
+        want = 4 * np.pi * (1 - 2.0 ** (-(alpha + 1))) / (alpha + 1)
+        assert abs(got - want) / want < 1e-6, (alpha, got, want)
+    tilted = [float(lobe_normalisation(4.0, torch.tensor(c, dtype=torch.float64)))
+              for c in (1.0, 0.8, 0.5, 0.2)]
+    assert all(b < a for a, b in zip(tilted, tilted[1:])), tilted
+
+
+def test_diffuse_scattering_is_exactly_reciprocal():
+    """Swapping the ends must not change the scattered field, at all.
+
+    This is what the symmetrised normalisation buys, and it is not free: see
+    the energy test below for what it costs.  Reciprocity is a theorem, so it
+    is the property held exact.
+    """
+    mesh = scenes.furnished_room()
+    cfg = TracerConfig(max_order=0, enable_diffraction=False,
+                       enable_diffuse=True, diffuse_patches=4)
+    for a, b in (((1.2, 1.2, 2.7), (4.5, 1.0, 0.9)),
+                 ((2.0, 3.0, 1.5), (5.0, 2.0, 0.6))):
+        with torch.no_grad():
+            fwd = RFDTracer(mesh, cfg).trace(
+                Transmitter(a, 5e9, 20.0, Antenna("isotropic")),
+                Receiver(b, Antenna("isotropic")))
+            rev = RFDTracer(mesh, cfg).trace(
+                Transmitter(b, 5e9, 20.0, Antenna("isotropic")),
+                Receiver(a, Antenna("isotropic")))
+
+        def power(p):
+            idx = [i for i, kind in enumerate(p.kind) if kind.startswith("diffuse")]
+            assert idx
+            return float((p.gain[:, idx].abs() ** 2).sum())
+
+        assert abs(power(fwd) - power(rev)) / power(fwd) < 1e-9
+
+
+def test_diffuse_energy_deficit_is_bounded_and_shrinks_with_directivity():
+    """The price of that reciprocity, measured rather than asserted away.
+
+    Conservation fixes the normalisation from the incident side alone and is
+    not symmetric; the symmetrised version is reciprocal and radiates less,
+    because it suppresses grazing directions where the two disagree most.  The
+    deficit is therefore a property of the lobe's width, and must shrink as the
+    lobe narrows.  Recorded here so a future change cannot quietly make it
+    worse.
+    """
+    from rfdt.materials import scattering_coefficient
+    freq, lam, height, radius, n = 60e9, C0 / 60e9, 1.0, 400.0, 6000
+    mesh = scenes.plate_scene(plate_size=(1.0, 1.0), material="concrete")
+    i = torch.arange(n, dtype=torch.float64) + 0.5
+    cos_t = 1.0 - i / n
+    sin_t = torch.sqrt((1 - cos_t ** 2).clamp_min(0))
+    phi = i * (np.pi * (3 - np.sqrt(5)))
+    pos = torch.stack([sin_t * torch.cos(phi), sin_t * torch.sin(phi), cos_t], -1) * radius
+    rx = Receiver(tuple(pos[0].tolist()), Antenna("isotropic"))
+
+    def retained(alpha):
+        cfg = TracerConfig(max_order=0, enable_diffraction=False,
+                           enable_diffuse=True, diffuse_patches=5,
+                           smooth_occlusion=False, diffuse_alpha=alpha)
+        tracer = RFDTracer(mesh, cfg)
+        tx = Transmitter((0.0, 0.0, height), freq, 20.0, Antenna("isotropic"))
+        with torch.no_grad():
+            p = tracer.trace(tx, rx, rx_positions=pos)
+        idx = [j for j, kind in enumerate(p.kind) if kind.startswith("diffuse")]
+        got = float(((p.gain[:, idx].abs() ** 2).sum(-1)
+                     * radius ** 2 * (2 * np.pi / n)).sum())
+        pts, area = tracer._facet_patches(0, 5)
+        r = torch.sqrt(pts[:, 0] ** 2 + pts[:, 1] ** 2 + height ** 2)
+        cos_i = height / r
+        S = scattering_coefficient(freq, cos_i,
+                                   get_material("concrete").roughness_sigma)
+        target = float(((((lam / (4 * np.pi * r)) ** 2) * cos_i * area) * S ** 2).sum())
+        return got / target
+
+    broad, narrow = retained(4.0), retained(16.0)
+    assert 0.70 < broad < 1.0, broad
+    assert narrow > broad, (broad, narrow)
+    assert narrow < 1.02, narrow
+
+
+def test_diffuse_restores_energy_only_where_the_surface_is_rough():
+    """It must recover what roughness removed, and leave smooth walls alone.
+
+    Metal is the control: it is smooth, so scatters nothing, so the diffuse
+    term must be invisible there.  A rough wall at millimetre wave has most of
+    its specular power removed, so the term has to be worth many dB.
+    """
+    mesh_metal = scenes.furnished_room(wall="metal")
+    mesh_rough = scenes.furnished_room(wall="concrete")
+    tx = Transmitter((1.2, 1.2, 2.7), 60e9, 20.0, Antenna("isotropic"))
+    rx = Receiver((4.5, 1.0, 0.9), Antenna("isotropic"))
+
+    def power(mesh, diffuse):
+        cfg = TracerConfig(max_order=2, weighting="rfdt", enable_diffraction=True,
+                           enable_diffuse=diffuse, diffuse_patches=4)
+        with torch.no_grad():
+            return float(RFDTracer(mesh, cfg).trace(tx, rx).power_dbm(20.0))
+
+    metal_gain = power(mesh_metal, True) - power(mesh_metal, False)
+    rough_gain = power(mesh_rough, True) - power(mesh_rough, False)
+    assert abs(metal_gain) < 1.0, metal_gain
+    assert rough_gain > 3.0, rough_gain
+
+
+# ---------------------------------------------------------------------------
 # geometry and mesh structure
 # ---------------------------------------------------------------------------
 def test_welding_produces_correct_wedge_indices():
