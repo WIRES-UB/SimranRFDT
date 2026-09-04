@@ -131,6 +131,210 @@ def test_material_gradients_flow():
 
 
 # ---------------------------------------------------------------------------
+# surface roughness (an addition to RFDT, not part of the paper)
+# ---------------------------------------------------------------------------
+def test_roughness_matches_the_closed_form():
+    """The factor must equal exp(-2 (k sigma cos)^2) with no fitted constant."""
+    from rfdt.materials import roughness_factor
+    for f in (5e9, 60e9):
+        for sig in (0.0002, 0.001, 0.002):
+            for c in (0.2, 0.7, 1.0):
+                got = float(roughness_factor(
+                    f, torch.tensor(c, dtype=torch.float64), sig, "rayleigh"))
+                k = 2 * np.pi * f / C0
+                assert abs(got - np.exp(-2 * (k * sig * c) ** 2)) < 1e-14
+
+
+def test_roughness_is_identity_for_a_smooth_surface():
+    """sigma = 0 must reproduce the ideal Fresnel coefficient bit for bit.
+
+    This is what keeps every closed-form check in this file meaningful: they
+    are all derived for smooth interfaces, so the roughness correction has to
+    disappear exactly, not merely nearly, when the surface is smooth.
+    """
+    from rfdt.materials import Material, roughness_factor
+    for model in ("rayleigh", "miller_brown"):
+        assert float(roughness_factor(
+            60e9, torch.tensor(1.0, dtype=torch.float64), 0.0, model)) == 1.0
+    smooth = Material("smooth_test", 5.24, 0.0, 0.0462, 0.7822)
+    assert smooth.roughness_sigma == 0.0
+    c = torch.tensor(0.7, dtype=torch.float64)
+    a = reflection_coefficient(60e9, c, smooth, "perp")
+    b = reflection_coefficient(60e9, c, smooth, "perp", roughness="none")
+    assert complex(a) == complex(b)
+
+
+def test_roughness_vanishes_at_grazing_incidence():
+    """A wave skimming the surface cannot resolve its height variation.
+
+    cos(theta) -> 0 drives the two-way phase difference between a bump and a
+    trough to zero, so however rough the surface is the coherent field must be
+    left untouched.  Without this limit the roughness term would fight the
+    Gamma -> -1 grazing behaviour that the tracer relies on.
+    """
+    from rfdt.materials import roughness_factor
+    for model in ("rayleigh", "miller_brown"):
+        r = float(roughness_factor(
+            60e9, torch.tensor(1e-9, dtype=torch.float64), 0.01, model))
+        assert abs(r - 1.0) < 1e-12, model
+
+
+def test_roughness_is_monotone_in_height_and_frequency():
+    """More roughness, or more frequency, can only cost coherent power."""
+    from rfdt.materials import roughness_factor
+    c = torch.tensor(0.8, dtype=torch.float64)
+    for model in ("rayleigh", "miller_brown"):
+        by_sigma = [float(roughness_factor(60e9, c, s, model))
+                    for s in (0.0, 0.0005, 0.001, 0.002, 0.004)]
+        by_freq = [float(roughness_factor(f, c, 0.001, model))
+                   for f in (1e9, 5e9, 28e9, 60e9, 140e9)]
+        assert all(x > y for x, y in zip(by_sigma, by_sigma[1:])), model
+        assert all(x > y for x, y in zip(by_freq, by_freq[1:])), model
+
+
+def test_miller_brown_is_never_more_severe_than_rayleigh():
+    """The two models must agree where Rayleigh holds and diverge only outside.
+
+    Rayleigh assumes a small two-way phase variance; Miller-Brown adds back the
+    energy a rough surface returns near the specular direction from favourably
+    tilted facets.  So Miller-Brown is always the weaker attenuation, and the
+    gap is negligible while the roughness parameter is small.  That is the
+    stated basis for making it the default, so it is asserted rather than
+    assumed.
+    """
+    from rfdt.materials import roughness_factor
+    for sig in (0.0002, 0.001, 0.002):
+        for c in np.linspace(0.05, 1.0, 20):
+            ct = torch.tensor(float(c), dtype=torch.float64)
+            for f in (5e9, 28e9, 60e9):
+                ray = float(roughness_factor(f, ct, sig, "rayleigh"))
+                mb = float(roughness_factor(f, ct, sig, "miller_brown"))
+                assert mb >= ray - 1e-15
+                # Size of the gap, from the series I0(x) = 1 + x^2/4 + ... with
+                # x = 2 g^2: the two models differ by e^{-x}(I0(x) - 1), which
+                # is bounded above by x^2/4 = g^4.  Asserting the derived bound
+                # rather than a hand-picked tolerance means this stays a test
+                # of the physics and not of a constant chosen to make it pass.
+                g = 2 * np.pi * f / C0 * sig * c
+                assert mb - ray <= g ** 4 + 1e-15, (f, sig, c, g)
+
+
+def test_roughness_gradient_matches_finite_differences():
+    """d|Gamma| / d sigma_h must be exact, since sigma_h is a fitted parameter."""
+    from rfdt.materials import MaterialParams
+    mat = get_material("concrete")
+    cos_ti = torch.tensor(0.8, dtype=torch.float64)
+
+    def params(sig):
+        return MaterialParams(
+            torch.log(torch.tensor(5.24, dtype=torch.float64)),
+            torch.log(torch.tensor(0.15, dtype=torch.float64)),
+            torch.log(torch.as_tensor(sig, dtype=torch.float64)))
+
+    sig = torch.tensor(1e-3, dtype=torch.float64, requires_grad=True)
+    reflection_coefficient(60e9, cos_ti, mat, "perp",
+                           params=params(sig)).abs().backward()
+    analytic = float(sig.grad)
+
+    h = 1e-9
+    def mag(x):
+        return float(reflection_coefficient(
+            60e9, cos_ti, mat, "perp", params=params(x)).abs())
+    numeric = (mag(1e-3 + h) - mag(1e-3 - h)) / (2.0 * h)
+    assert abs(analytic - numeric) / abs(numeric) < 1e-6, (analytic, numeric)
+
+
+def test_roughness_preserves_reciprocity():
+    """Roughness must not break the swap-the-ends invariant.
+
+    The factor depends on the incidence angle, which is shared by the two
+    directions of travel, so reciprocity should survive.  It is checked rather
+    than argued because the wedge-face coefficients receive the same treatment
+    and those are the terms where reciprocity has broken before.
+    """
+    mesh = scenes.furnished_room()
+    cfg = TracerConfig(max_order=1, surface_roughness="miller_brown")
+    a, b = (1.2, 1.2, 2.7), (4.5, 1.0, 0.9)
+    fwd = RFDTracer(mesh, cfg).trace(
+        Transmitter(a, 60e9, 20.0, Antenna("isotropic")),
+        Receiver(b, Antenna("isotropic")))
+    rev = RFDTracer(mesh, cfg).trace(
+        Transmitter(b, 60e9, 20.0, Antenna("isotropic")),
+        Receiver(a, Antenna("isotropic")))
+    assert abs(float(fwd.power_dbm(20.0)) - float(rev.power_dbm(20.0))) < 1e-9
+
+
+def test_roughness_regime_flags_where_the_missing_diffuse_term_dominates():
+    """The rough-surface flag must use the classical criterion, not a guess.
+
+    Once a surface is rough the tracer removes most of the specular energy and
+    nothing re-radiates it, so the returned field is a residue of a quantity
+    the simulator no longer represents.  Reporting that is the difference
+    between a documented limitation and a wrong number presented as a
+    prediction, so the boundary is pinned here.
+    """
+    from rfdt.materials import (RAYLEIGH_SMOOTH_LIMIT, roughness_regime,
+                                roughness_factor)
+    assert abs(RAYLEIGH_SMOOTH_LIMIT - np.pi / 4) < 1e-12
+    c = torch.tensor(1.0, dtype=torch.float64)
+
+    # At 5 GHz nothing in the library crosses the criterion, and the largest
+    # specular loss anywhere in it stays under 1 dB.  That is the bound worth
+    # asserting: brick already scatters about 16 % of its specular power at
+    # 5 GHz, so a tighter claim about the energy fraction would be false, while
+    # the loss in dB is what decides whether a link budget notices.
+    for name in ["metal", "foam_board", "concrete", "brick", "human_body"]:
+        r = roughness_regime(5e9, c, get_material(name).roughness_sigma)
+        assert not r["is_rough"], (name, r["g"])
+        assert r["specular_loss_db"] < 1.0, (name, r)
+
+    # at 77 GHz the rough surfaces are flagged and the smooth ones are not
+    for name in ["metal", "glass"]:
+        assert not roughness_regime(77e9, c, get_material(name).roughness_sigma)["is_rough"]
+    for name in ["concrete", "brick"]:
+        r = roughness_regime(77e9, c, get_material(name).roughness_sigma)
+        assert r["is_rough"], name
+        assert r["unmodelled_fraction"] > 0.9, (name, r)
+
+    # the flag must track the criterion exactly, either side of it
+    k = 2 * np.pi * 77e9 / C0
+    just_smooth = (RAYLEIGH_SMOOTH_LIMIT * 0.99) / k
+    just_rough = (RAYLEIGH_SMOOTH_LIMIT * 1.01) / k
+    assert not roughness_regime(77e9, c, just_smooth)["is_rough"]
+    assert roughness_regime(77e9, c, just_rough)["is_rough"]
+
+
+    # The human body entry carries no roughness on purpose: the model assumes a
+    # planar interface and a body is not one.  Pinned so that a future edit
+    # adding a plausible-looking value has to justify itself against this.
+    assert get_material("human_body").roughness_sigma == 0.0
+
+    # and the reported loss must be the same number the tracer actually applies
+    r = roughness_regime(77e9, c, 0.001)
+    rho = float(roughness_factor(77e9, c, 0.001))
+    assert abs(r["specular_loss_db"] - (-20 * np.log10(rho))) < 1e-12
+
+
+def test_roughness_is_negligible_at_5ghz_and_material_at_60ghz():
+    """Pin the band dependence that motivates the correction existing at all.
+
+    The point of the term is that it is invisible at 5 GHz and cannot be
+    ignored at 60 GHz.  If a future change made it matter at 5 GHz, every
+    previously reported 5 GHz result would silently move, so the boundary is
+    asserted here.
+    """
+    from rfdt.materials import roughness_factor
+    c = torch.tensor(0.7, dtype=torch.float64)
+    for name in ["metal", "foam_board", "concrete", "plasterboard"]:
+        sig = get_material(name).roughness_sigma
+        loss_5 = -20.0 * np.log10(float(roughness_factor(5e9, c, sig)))
+        assert loss_5 < 0.1, (name, loss_5)
+    rough = get_material("concrete").roughness_sigma
+    loss_60 = -20.0 * np.log10(float(roughness_factor(60e9, c, rough)))
+    assert loss_60 > 3.0, loss_60
+
+
+# ---------------------------------------------------------------------------
 # geometry and mesh structure
 # ---------------------------------------------------------------------------
 def test_welding_produces_correct_wedge_indices():

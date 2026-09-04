@@ -46,7 +46,7 @@ import matplotlib.pyplot as plt                                       # noqa: E4
 from rfdt import scenes                                               # noqa: E402
 from rfdt.antennas import mmwave_radar                                # noqa: E402
 from rfdt.geometry import box, plate                                  # noqa: E402
-from rfdt.materials import C0, get_material                           # noqa: E402
+from rfdt.materials import C0, get_material, roughness_regime         # noqa: E402
 from rfdt.signal import (FMCWConfig, range_doppler_map,               # noqa: E402
                          range_profile_fft)
 from rfdt.tracer import RFDTracer, TracerConfig                       # noqa: E402
@@ -122,6 +122,16 @@ def study_a(cfg, fmcw):
                 __import__("rfdt.materials", fromlist=["x"]).reflection_coefficient(
                     77e9, torch.tensor(1.0, dtype=torch.float64), mat, "perp"))))),
             "in_validity_range": mat.in_validity_range(77e9),
+            # 77 GHz is where surface roughness stops being a small correction.
+            # The tracer removes the incoherent share from the specular return
+            # but does not re-radiate it, so for a rough surface the echo below
+            # is a specular residue rather than a predicted total.  The share
+            # that is unmodelled is reported beside it rather than left to be
+            # inferred, and it is a continuum, so the number is printed instead
+            # of only the pass/fail flag.
+            "roughness_regime": roughness_regime(
+                77e9, torch.tensor(1.0, dtype=torch.float64),
+                mat.roughness_sigma),
             "source": mat.source,
         }
     return out, noise_dbm
@@ -235,12 +245,23 @@ def main():
     print(f"\nA. wall echo vs material (wall at {WALL_RANGE} m, "
           f"noise floor {noise_dbm:.1f} dBm)")
     print(f"{'material':15s} {'|G|[dB]':>8s} {'echo[dBm]':>10s} {'SNR[dB]':>8s} "
-          f"{'range[m]':>9s} {'err[cm]':>8s}")
+          f"{'range[m]':>9s} {'err[cm]':>8s} {'scattered':>10s}")
     for k, v in a.items():
+        rr = v["roughness_regime"]
         flag = "" if v["in_validity_range"] else "  (*)"
+        flag += "  (R)" if rr["is_rough"] else ""
         print(f"{k:15s} {v['reflection_db']:8.2f} {v['echo_dbm']:10.2f} "
               f"{v['echo_snr_db']:8.1f} {v['peak_range_m']:9.3f} "
-              f"{v['range_error_m']*100:8.2f}{flag}")
+              f"{v['range_error_m']*100:8.2f} "
+              f"{rr['unmodelled_fraction']*100:9.1f}%{flag}")
+    print("    'scattered' is the share of specular power that surface "
+          "roughness removes and that nothing re-radiates, because diffuse\n"
+          "    scattering is not modelled.  Where it is large the echo is a "
+          "specular residue, not a predicted total return, and the\n"
+          "    true echo is higher by an amount this simulator cannot supply.  "
+          "(R) marks a surface past the Rayleigh smoothness\n"
+          "    criterion k*sigma*cos = pi/4.  This is a 77 GHz effect; the "
+          "5 GHz results of experiment 2 are unaffected.")
 
     b = study_b(cfg, fmcw)
     print("\nB. metal target seen through a board (Fig. 15a analogue)")

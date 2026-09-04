@@ -81,6 +81,13 @@ class TracerConfig:
     enable_transmission: bool = True
     #: scalar polarisation: "perp" (TE, default), "par" (TM), "unpolarised"
     polarisation: str = "perp"
+    #: surface-roughness model reducing the coherent specular field:
+    #: "miller_brown" (default), "rayleigh", or "none" for the ideally smooth
+    #: interface the Fresnel equations assume.  Not part of RFDT; see
+    #: materials.roughness_factor for the derivation, for why the default is
+    #: the Miller-Brown form rather than the more commonly quoted Rayleigh
+    #: one, and for the energy bookkeeping this deliberately leaves open.
+    surface_roughness: str = "miller_brown"
     #: keep candidates whose reflection point is at most this far outside a
     #: facet [m]; those are the transition-region paths that carry gradient
     prune_margin: float = 0.5
@@ -451,7 +458,8 @@ class RFDTracer:
             refl = refl * reflection_coefficient(
                 f_hz, cos_ti, self.material(si),
                 polarisation=self.cfg.polarisation,
-                params=self._params_for(si, mat_overrides))
+                params=self._params_for(si, mat_overrides),
+                roughness=self.cfg.surface_roughness)
 
             d_edge, e_dir = self._edge_distance(pts[:, i, :], si, vertices)
             if self.cfg.weighting == "heaviside":
@@ -579,12 +587,19 @@ class RFDTracer:
 
         cos_0 = _sym_grazing(torch.sin)
         cos_n = _sym_grazing(lambda a: torch.sin(n_idx * np.pi - a))
+        # The wedge-face coefficients get the same roughness treatment as an
+        # ordinary bounce: they represent reflection off those faces, so a
+        # rough face must reduce them by the same coherence factor.  cos_0 and
+        # cos_n are already the reciprocal grazing cosines of _sym_grazing, so
+        # the roughness factor inherits that symmetry and reciprocity holds.
         r0 = reflection_coefficient(tx.frequency, cos_0, self.material(si_a),
                                     self.cfg.polarisation,
-                                    self._params_for(si_a, mat_overrides))
+                                    self._params_for(si_a, mat_overrides),
+                                    roughness=self.cfg.surface_roughness)
         rn = reflection_coefficient(tx.frequency, cos_n, self.material(si_b),
                                     self.cfg.polarisation,
-                                    self._params_for(si_b, mat_overrides))
+                                    self._params_for(si_b, mat_overrides),
+                                    roughness=self.cfg.surface_roughness)
 
         D = tf.diffraction_coefficient(phi_i, phi_d, n_idx.expand(R), k, L,
                                        sin_b0, r0, rn)

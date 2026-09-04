@@ -136,6 +136,22 @@ Adam, optional Laplacian mesh regularisation.
 
 Both are documented at the point of implementation.
 
+### One place this implementation goes beyond the paper
+
+**Surface roughness.** The Fresnel coefficients of Eq. 56 assume an ideally
+smooth interface. Real building surfaces have a root-mean-square height of
+roughly 0.1 mm to 2 mm. Against a 6 cm wavelength at 5 GHz that costs under
+0.2 dB for ordinary interior surfaces and 0.75 dB for the roughest entry in the
+library; against a 5 mm wavelength at 60 GHz it reaches 6 to 7 dB. The coherent
+specular field is therefore multiplied by a roughness factor, derived in
+`materials.roughness_factor` from the two-way phase spread across the surface
+height distribution. The default is the Miller-Brown form rather than the more
+commonly quoted Rayleigh one; that choice is made on validity range, since the
+Rayleigh derivation assumes a small phase variance and the roughness parameter
+reaches 2.5 for brick at 60 GHz. Experiment 7 measures what the correction
+changes, and the surface heights are differentiable so they can be fitted
+rather than trusted.
+
 ### Not implemented
 
 Higher-order diffraction, diffuse scattering, near-field and full-wave effects
@@ -147,7 +163,7 @@ as outside UTD validity.
 
 ## 5. Validation
 
-`python3 tests/test_rfdt.py` runs 29 checks; all pass. The substantive ones:
+`python3 tests/test_rfdt.py` runs 37 checks; all pass. The substantive ones:
 
 | Check | Result |
 |---|---|
@@ -395,6 +411,52 @@ One detail worth keeping in view: the two reflectivity curves converge at
 grazing incidence. Even foam reflects almost perfectly at shallow angles, which
 is why a foam-walled room still has any multipath at all.
 
+### Experiment 7: surface roughness, and what it is worth
+
+`results/exp7_roughness.{png,json}`
+
+The Fresnel coefficient assumes a mirror-smooth wall. This experiment adds the
+roughness correction described in section 4 and then measures, rather than
+assumes, what it changes.
+
+**Change in route-mean received power against the ideally smooth model:**
+
+| Material | RMS surface height | 5 GHz | 60 GHz |
+|---|---|---|---|
+| Metal | 0.05 mm | -0.00 dB | -0.10 dB |
+| Foam board | 0.30 mm | -0.00 dB | -0.23 dB |
+| Plasterboard | 0.20 mm | -0.00 dB | -0.47 dB |
+| Concrete | 1.00 mm | -0.03 dB | **-5.88 dB** |
+| Brick | 2.00 mm | -0.08 dB | **-7.48 dB** |
+
+Three things follow, and the first two are not what was expected before running
+it.
+
+1. **The metal-versus-foam comparison this study is built on is untouched.**
+   Both materials happen to be smooth, so the correction cannot reach them. The
+   60 GHz power gap moved from 15.72 dB to 15.86 dB, slightly wider rather than
+   narrower. Every 5 GHz result in experiments 2, 5 and 6 is unchanged, and
+   experiment 1, the differentiability claim, is unchanged to the last digit.
+
+2. **What it does repair is concrete and brick**, which were overpredicted by 6
+   to 7 dB at 60 GHz, and the 77 GHz radar echoes of experiment 3, which move by
+   up to 21 dB.
+
+3. **At 60 GHz the surface height matters more than the model.** Panel (d)
+   sweeps the height over its factor-of-two uncertainty: concrete's route power
+   spans **5.4 dB**, against 2.7 dB for the choice between the two roughness
+   models. The weakest input now dominates the answer, which is the argument for
+   fitting the surface height from data rather than tabulating it. The tracer
+   supports that: `MaterialParams` takes an optional third learnable parameter
+   whose analytic gradient is verified against finite differences in the tests.
+
+Experiment 3 reports, per material, the share of specular power the roughness
+term removes and that nothing re-radiates, and flags any surface past the
+Rayleigh criterion. For concrete and brick at 77 GHz that share exceeds 96 %, so
+those echoes are a specular residue rather than a predicted total return, and
+the real echo is higher by an amount this simulator cannot supply. Saying so is
+the point of the column.
+
 ---
 
 ## 7. Honest limitations
@@ -405,6 +467,23 @@ is why a foam-walled room still has any multipath at all.
   path tracking; the `"unpolarised"` option is a documented approximation whose
   phase is taken from the TE component.
 - **First-order diffraction only**, and none from concave junctions.
+- **Roughness removes energy without re-radiating it.** The roughness factor
+  takes power out of the specular direction, and nothing puts it back, because
+  diffuse scattering is not modelled. Every roughness-enabled power is
+  therefore a lower bound, by a known and signed amount. The two effects belong
+  together and should be added together.
+- **Roughness is not applied to the human body entry.** Its surface height is
+  deliberately zero, which is not a claim that a body is smooth. The Rayleigh
+  factor assumes a planar interface with small-scale height variation, and a
+  body violates the planar assumption at a much larger scale, so the correction
+  is outside its regime. Applying a plausible-looking clothing roughness there
+  would have moved the 77 GHz radar echo by more than 20 dB on the strength of
+  an invented number.
+- **The surface heights are estimates, not measurements.** Unlike the
+  permittivities, which are ITU-R P.2040-1 regressions, the roughness values in
+  `ROUGHNESS_SIGMA_M` are order-of-magnitude literature figures carrying about
+  a factor-of-two uncertainty. Experiment 7 panel (d) shows what that
+  uncertainty is worth at 60 GHz, and it is not small for rough materials.
 - **Convex facets.** The facet edge distance is a minimum over outline edges,
   exact for convex outlines (what the scene builders produce) and conservative
   for reflex corners.

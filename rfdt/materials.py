@@ -6,7 +6,9 @@ for Radio Frequency Digital Twin" (RFDT, MobiCom '26):
   * complex relative permittivity of building materials,
   * intrinsic impedance and Snell refraction         (Eq. 56, 57),
   * Fresnel reflection / transmission coefficients   (Eq. 56),
-  * complex propagation constant, attenuation        (Eq. 58, 59).
+  * complex propagation constant, attenuation        (Eq. 58, 59),
+  * a surface-roughness correction to the specular reflection, which is *not*
+    in RFDT and is added here (see ``roughness_factor``).
 
 Every quantity is a differentiable ``torch`` expression of the material
 parameters ``(eps_r_real, sigma)``, so that
@@ -69,6 +71,14 @@ class Material:
     thickness   : default slab thickness [m], used for penetration loss.
     f_range     : validity range of the regression [GHz] (reported, not enforced).
     source      : "ITU-R P.2040-1" or "approx" (see module docstring).
+    roughness_sigma : root-mean-square surface height [m], 0.0 for an ideally
+                  smooth surface.  Drives the specular reduction computed by
+                  ``roughness_factor``.  These are order-of-magnitude values
+                  from the building-materials literature, NOT measurements of
+                  the particular surfaces simulated here, so they are reported
+                  as estimates wherever they influence a result.  Being
+                  differentiable, the value can also be recovered from data
+                  rather than trusted.
     """
 
     name: str
@@ -82,6 +92,8 @@ class Material:
     f_range: Tuple[float, float] = (1.0, 100.0)
     source: str = "ITU-R P.2040-1"
     label: str = ""
+    #: appended last so that existing positional constructions are unaffected
+    roughness_sigma: float = 0.0
 
     def __post_init__(self):
         """Coerce the position to a float64 tensor."""
@@ -170,6 +182,12 @@ class Material:
             "eps_imag": float(-eps_c.imag),
             "loss_tangent": float(-eps_c.imag / eps_c.real),
             "alpha_Np_per_m": float(self.attenuation(f_hz)),
+            "roughness_sigma_m": float(self.roughness_sigma),
+            "rayleigh_param_normal": float(
+                2.0 * torch.pi * _t(f_hz) / C0 * self.roughness_sigma),
+            "is_rough_at_normal_incidence": bool(
+                float(2.0 * torch.pi * _t(f_hz) / C0 * self.roughness_sigma)
+                > RAYLEIGH_SMOOTH_LIMIT),
             "source": self.source,
             "f_range_ghz": list(self.f_range),
             "in_validity_range": self.in_validity_range(f_hz),
@@ -187,15 +205,36 @@ class MaterialParams:
 
     log_eps_real: torch.Tensor
     log_sigma: torch.Tensor
+    #: optional third parameter, the log root-mean-square surface height [m].
+    #: ``None`` leaves roughness fixed at the material's tabulated value, which
+    #: keeps every existing two-parameter inversion behaving exactly as before.
+    log_roughness: Optional[torch.Tensor] = None
 
     @staticmethod
-    def from_material(mat: Material, f_hz: float, requires_grad: bool = True) -> "MaterialParams":
-        """Initialise learnable parameters from an existing material at ``f_hz``."""
+    def from_material(mat: Material, f_hz: float, requires_grad: bool = True,
+                      learn_roughness: bool = False,
+                      roughness_init: Optional[float] = None) -> "MaterialParams":
+        """Initialise learnable parameters from an existing material at ``f_hz``.
+
+        ``learn_roughness`` adds the surface height to the optimisation.  Note
+        that the roughness factor is flat at ``sigma_h = 0`` (its derivative
+        vanishes there, because the factor depends on ``sigma_h`` only through
+        its square), so a material tabulated as perfectly smooth cannot be
+        learned away from zero.  ``roughness_init`` supplies a non-zero start
+        for that case; without it a zero-roughness material stays at zero and
+        the gradient is legitimately, not erroneously, zero.
+        """
         e = torch.log(_t(mat.eps_real(f_hz)).clone().detach())
         s = torch.log(_t(mat.sigma(f_hz)).clone().detach().clamp_min(1e-12))
+        r = None
+        if learn_roughness:
+            init = mat.roughness_sigma if roughness_init is None else roughness_init
+            r = torch.log(_t(init).clone().detach().clamp_min(1e-9))
+            r = r.requires_grad_(requires_grad)
         return MaterialParams(
             log_eps_real=e.requires_grad_(requires_grad),
             log_sigma=s.requires_grad_(requires_grad),
+            log_roughness=r,
         )
 
     @property
@@ -208,9 +247,19 @@ class MaterialParams:
         """Current conductivity estimate [S/m], exponentiated out of log space."""
         return torch.exp(self.log_sigma)
 
+    @property
+    def roughness(self) -> Optional[torch.Tensor]:
+        """Current surface-height estimate [m], or None if it is not learned."""
+        if self.log_roughness is None:
+            return None
+        return torch.exp(self.log_roughness)
+
     def tensors(self):
         """The leaf tensors to hand to an optimiser."""
-        return [self.log_eps_real, self.log_sigma]
+        t = [self.log_eps_real, self.log_sigma]
+        if self.log_roughness is not None:
+            t.append(self.log_roughness)
+        return t
 
 
 # ---------------------------------------------------------------------------
@@ -266,12 +315,180 @@ def fresnel(
     }
 
 
+# ---------------------------------------------------------------------------
+# surface roughness (an addition to RFDT, not part of the paper)
+# ---------------------------------------------------------------------------
+def roughness_factor(
+    f_hz,
+    cos_ti: torch.Tensor,
+    sigma_h,
+    model: str = "miller_brown",
+) -> torch.Tensor:
+    """Reduction of the *coherent* specular field by surface roughness.
+
+    Why this is needed
+    ------------------
+    The Fresnel coefficients of Eq. 56 are derived for an ideally smooth,
+    infinite, homogeneous interface.  Real building surfaces are not smooth:
+    paint texture, wallpaper, mortar lines and screw heads give a root-mean-
+    square surface height of roughly 0.1 mm to 2 mm.  Whether that matters is
+    decided by the wavelength, so it is negligible at 5 GHz (lambda = 6 cm) and
+    substantial at 60 GHz (lambda = 5 mm).  A simulator that ignores it will
+    overpredict every specular bounce in the millimetre-wave band, and it will
+    do so silently.
+
+    Where the expression comes from
+    -------------------------------
+    Consider two rays striking the surface a small distance apart, one on a
+    bump of height ``h`` and one in a trough.  Both travel down to the surface
+    and back up, so the extra path length of the bump ray is ``2 h cos(theta)``
+    and its extra phase is ``2 k h cos(theta)``.  Take the surface heights to be
+    zero-mean Gaussian with standard deviation ``sigma_h``.  The phase is then
+    Gaussian with standard deviation
+
+        s = 2 k sigma_h cos(theta),
+
+    and the coherent (phasor-averaged) field is the expectation of
+    ``exp(j*phi)`` over that distribution.  For a Gaussian phase this
+    expectation is ``exp(-s**2 / 2)``, which gives the Ament, or Rayleigh,
+    factor
+
+        rho = exp(-2 (k sigma_h cos(theta))**2).
+
+    Read it as a coherence loss: the rougher the surface in wavelengths, the
+    more the contributions from different surface heights disagree in phase and
+    cancel, and the less energy survives in the mirror direction.
+
+    ``model="miller_brown"`` uses the refinement
+
+        rho = exp(-x) * I0(x),        x = 2 (k sigma_h cos(theta))**2,
+
+    where ``I0`` is the modified Bessel function of the first kind.  The plain
+    Rayleigh form assumes the surface is flat on the scale of a Fresnel zone
+    apart from its height variation; Miller and Brown account for the fact that
+    a rough surface still returns some energy towards the specular direction
+    from its favourably tilted facets, so it decays more slowly and does not
+    drive the coherent field to zero.  It is the less severe of the two and is
+    the better-validated model at large roughness.  It is evaluated through
+    ``torch.special.i0e``, which computes ``exp(-x) * I0(x)`` as a single
+    stable quantity, so no overflow occurs for large ``x``.
+
+    Both limits are correct by construction: ``rho -> 1`` as ``sigma_h -> 0``
+    (a smooth surface), and ``rho -> 1`` at grazing incidence where
+    ``cos(theta) -> 0``, because a wave skimming along the surface barely
+    resolves its height variation at all.
+
+    What this deliberately does NOT do
+    ----------------------------------
+    The energy removed from the specular direction is scattered elsewhere, not
+    absorbed.  This function removes it and nothing puts it back, because
+    diffuse scattering is not modelled here.  The consequence is a *known and
+    signed* bias: total received power is underpredicted once the roughness
+    factor departs from unity, most visibly in the millimetre-wave band and on
+    multi-bounce paths.  That is a deliberate, documented limitation rather
+    than a hidden one; adding it back requires a diffuse scattering term, which
+    is separate work.  Coherent transmission through a rough interface is
+    likewise still computed as if the interface were smooth.
+
+    Parameters
+    ----------
+    cos_ti  : cosine of the incidence angle measured from the surface normal.
+    sigma_h : root-mean-square surface height [m], scalar or tensor.  May carry
+              a gradient, which is how it is recovered by inversion.
+    model   : "miller_brown" (default), "rayleigh", or "none" to disable.
+
+    Why the default is Miller-Brown
+    -------------------------------
+    Chosen on validity range, before looking at what either model does to any
+    result.  The Rayleigh form assumes the two-way phase variance is small, so
+    that a Gaussian average is the whole story.  Its accuracy therefore decays
+    as ``g = k sigma_h cos(theta)`` grows, and it decays in a known direction:
+    it over-predicts the coherence loss, because it credits nothing to the
+    energy a rough surface still returns near the specular direction from its
+    favourably tilted facets.  Miller-Brown restores exactly that term.
+
+    The two agree to within 1e-4 for ``g < 0.15``, which covers every material
+    in the library at 5 GHz, so at that band the choice is immaterial.  At
+    60 GHz ``g`` reaches 2.5 for brick, far outside the small-variance regime,
+    and there the Rayleigh form returns a specular level near -110 dB, which is
+    not a credible reflection from a brick wall.  Defaulting to the model whose
+    derivation still holds over the range actually encountered is the
+    conservative choice; ``"rayleigh"`` remains available and the difference
+    between them is reported as an uncertainty, not hidden behind a default.
+    """
+    if model == "none":
+        return torch.ones((), dtype=FDTYPE)
+    c = torch.as_tensor(cos_ti)
+    c = c.real if c.is_complex() else c
+    c = c.to(FDTYPE).abs()
+    k = 2.0 * torch.pi * _t(f_hz) / C0
+    # g is the Rayleigh roughness parameter, the surface height in radians of
+    # two-way phase; x is the variance of that phase.
+    g = k * _t(sigma_h) * c
+    x = 2.0 * g ** 2
+    if model == "rayleigh":
+        return torch.exp(-x)
+    if model == "miller_brown":
+        return torch.special.i0e(x)
+    raise ValueError(
+        "unknown roughness model %r; expected 'rayleigh', 'miller_brown' or "
+        "'none'" % (model,))
+
+
+#: Rayleigh smoothness criterion.  A surface counts as smooth while
+#: ``k sigma_h cos(theta) < pi/4``, equivalently ``sigma_h < lambda/(8 cos)``,
+#: the classical threshold at which the two-way phase spread across the surface
+#: height reaches a quarter cycle.
+RAYLEIGH_SMOOTH_LIMIT = float(torch.pi / 4.0)
+
+
+def roughness_regime(f_hz, cos_ti, sigma_h, model: str = "miller_brown"):
+    """Report whether a surface is in the regime where the missing diffuse
+    term dominates, rather than silently returning a specular-only number.
+
+    ``roughness_factor`` removes energy from the specular direction, and
+    nothing in this simulator puts it back, because diffuse scattering is not
+    modelled.  While the surface is smooth that removed fraction is negligible
+    and the specular field is the whole answer.  Once the surface is rough the
+    removed fraction is most of the energy, so the returned field is a small
+    residue of a quantity the simulator no longer represents, and quoting it as
+    a predicted echo would be misleading in exactly the way an out-of-range
+    ITU-R extrapolation would be.
+
+    The boundary used is the classical Rayleigh criterion,
+    ``k sigma_h cos(theta) = pi/4``, not a threshold invented here.
+
+    Returns ``{"g", "specular_loss_db", "is_rough", "unmodelled_fraction"}``,
+    where ``unmodelled_fraction`` is the share of incident power taken out of
+    the specular direction and not re-radiated anywhere.  Callers are expected
+    to report the flag beside the number, as experiment 3 does.
+    """
+    rho = roughness_factor(f_hz, cos_ti, sigma_h, model)
+    c = torch.as_tensor(cos_ti)
+    c = (c.real if c.is_complex() else c).to(FDTYPE).abs()
+    g = 2.0 * torch.pi * _t(f_hz) / C0 * _t(sigma_h) * c
+    return {
+        "g": float(g),
+        "specular_loss_db": float(-20.0 * torch.log10(rho.clamp_min(1e-30))),
+        "is_rough": bool(float(g) > RAYLEIGH_SMOOTH_LIMIT),
+        "unmodelled_fraction": float(1.0 - rho ** 2),
+    }
+
+
+def _roughness_sigma(mat: "Material", params: Optional["MaterialParams"]):
+    """Surface height to use: the learnable one when present, else tabulated."""
+    if params is not None and params.roughness is not None:
+        return params.roughness
+    return mat.roughness_sigma
+
+
 def reflection_coefficient(
     f_hz,
     cos_ti: torch.Tensor,
     mat: Material,
     polarisation: str = "perp",
     params: Optional[MaterialParams] = None,
+    roughness: str = "miller_brown",
 ) -> torch.Tensor:
     """Scalar reflection coefficient used by the ray tracer.
 
@@ -291,16 +508,26 @@ def reflection_coefficient(
     therefore ill-defined somewhere in between; taking the ``G_s`` phase is a
     documented approximation.  A strict treatment needs dual-polarised path
     tracking, which is outside this scalar model.
+
+    ``roughness`` selects the surface-roughness model applied on top of the
+    smooth-interface Fresnel value; see ``roughness_factor``.  It multiplies
+    both polarisations by the same real factor, which is correct to first
+    order because the coherence loss is a path-length effect and does not
+    distinguish the two field orientations.  Pass ``"none"`` to recover the
+    ideally smooth coefficient, which is what every ablation against the
+    previous behaviour uses.
     """
     fr = fresnel(f_hz, cos_ti, mat, params2=params)
     gs, gp = fr["gamma_perp"], fr["gamma_par"]
+    rho = roughness_factor(f_hz, cos_ti, _roughness_sigma(mat, params),
+                           roughness).to(CDTYPE)
     if polarisation == "perp":
-        return gs
+        return gs * rho
     if polarisation == "par":
-        return gp
+        return gp * rho
     mag = torch.sqrt(0.5 * (gs.abs() ** 2 + gp.abs() ** 2))
     phase = torch.angle(gs)
-    return mag.to(CDTYPE) * torch.exp(1j * phase.to(CDTYPE))
+    return mag.to(CDTYPE) * torch.exp(1j * phase.to(CDTYPE)) * rho
 
 
 def interface_transmission(
@@ -403,6 +630,52 @@ def slab_transmission(
 VACUUM = Material("vacuum", a=1.0, b=0.0, c=0.0, d=0.0, thickness=0.0,
                   f_range=(0.0, 1e6), label="Vacuum")
 
+#: Root-mean-square surface height [m] per material.
+#:
+#: IMPORTANT: unlike the (a, b, c, d) permittivity regressions above, these are
+#: NOT from ITU-R P.2040-1, which tabulates dielectric properties only and
+#: treats roughness qualitatively.  They are order-of-magnitude values from the
+#: building-materials literature, chosen to represent an ordinary interior
+#: surface of each kind, and they carry roughly a factor-of-two uncertainty.
+#: They are reported as estimates wherever they affect a result, and
+#: ``roughness_factor`` is differentiable in them so they can be recovered from
+#: measurements instead of trusted.
+#:
+#: Scale for reading them: the specular loss at normal incidence is
+#: 20*log10(exp(-2*(k*sigma)**2)), which for sigma = 1 mm is 0.19 dB at 5 GHz
+#: and 27 dB at 60 GHz.  Everything below 0.2 mm is effectively smooth even at
+#: 60 GHz.
+ROUGHNESS_SIGMA_M = {
+    "metal":              0.00005,   # rolled or brushed sheet, near-optical finish
+    "glass":              0.00002,   # float glass, smooth on any RF scale
+    "marble":             0.00005,   # polished stone
+    "plastic_board":      0.00010,   # moulded sheet
+    "plasterboard":       0.00020,   # painted drywall, paint texture dominates
+    "paper_board":        0.00020,
+    "floorboard":         0.00030,   # sealed timber floor
+    "wood":               0.00030,   # planed and finished timber
+    "foam_board":         0.00030,   # extruded foam with a smooth skin
+    "plywood":            0.00040,   # visible grain
+    "ceiling_board":      0.00050,   # mineral-fibre tile, textured face
+    "chipboard":          0.00050,   # pressed chip texture
+    "concrete":           0.00100,   # smooth-formed; board-marked runs higher
+    "carpet":             0.00200,   # pile, and only crudely a rough surface
+    "brick":              0.00200,   # mortar lines dominate over the face
+    # Deliberately zero, and NOT a claim that a body is smooth.  The Rayleigh
+    # factor is derived for a planar interface carrying small-scale height
+    # variation.  A human body violates the planar assumption at a scale far
+    # larger than any surface roughness, and its return is governed by
+    # curvature and volumetric scattering that this model does not represent.
+    # Assigning a plausible-looking clothing roughness here would let an
+    # invented number swing the 77 GHz radar echo by more than 20 dB while
+    # applying a correction outside its regime.  The entry is therefore left
+    # uncorrected and flagged in the limitations instead.
+    "human_body":         0.00000,
+    "very_dry_ground":    0.00500,
+    "medium_dry_ground":  0.00500,
+    "wet_ground":         0.00500,
+}
+
 #: ITU-R P.2040-1 Table 3 regression coefficients.
 ITU_MATERIALS = {
     "concrete":      Material("concrete",      5.24,  0.0, 0.0462,  0.7822, thickness=0.30, f_range=(1, 100)),
@@ -437,6 +710,15 @@ APPROX_MATERIALS = {
 }
 
 MATERIALS: Dict[str, Material] = {"vacuum": VACUUM, **ITU_MATERIALS, **APPROX_MATERIALS}
+
+# Attach the surface heights.  Done as a separate pass rather than inline so
+# that the dielectric tables above stay a verbatim transcription of ITU-R
+# P.2040-1 Table 3, with nothing of a different provenance mixed into them.
+for _name, _sig in ROUGHNESS_SIGMA_M.items():
+    MATERIALS[_name].roughness_sigma = _sig
+_missing = sorted(set(MATERIALS) - set(ROUGHNESS_SIGMA_M) - {"vacuum"})
+assert not _missing, "no roughness estimate for: %s" % (_missing,)
+del _name, _sig, _missing
 
 
 def get_material(name: str) -> Material:

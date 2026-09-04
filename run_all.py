@@ -36,6 +36,8 @@ EXPERIMENTS = {
         "channel frequency response: amplitude, phase and coherence bandwidth"),
     6: ("exp6_metal_vs_foam",
         "metal against foam head to head, the two extremes of experiment 2"),
+    7: ("exp7_roughness",
+        "surface roughness added to the Fresnel coefficient, and its effect"),
 }
 
 

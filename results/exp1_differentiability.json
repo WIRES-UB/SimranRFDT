@@ -4,14 +4,14 @@
   "schemes": {
     "Conventional (Eq. 3)": {
       "continuity": {
-        "max_jump": 0.0021338934074152526,
-        "max_jump_normalised": 0.9554968040816215,
-        "mean_step": 5.58320393720796e-06
+        "max_jump": 0.0021337996309618644,
+        "max_jump_normalised": 0.9555008076153033,
+        "mean_step": 5.582935184239423e-06
       },
       "gradient_vs_fd": {
-        "rel_l2_error": 3.7146534301946252e-09,
-        "cosine_similarity": 0.9999999999999999,
-        "max_abs_error": 1.2595194609499316e-09
+        "rel_l2_error": 3.7147815339704503e-09,
+        "cosine_similarity": 1.0,
+        "max_abs_error": 1.2591773179693178e-09
       },
       "geometry_gradient": {
         "fraction_nonzero": 0.0,
@@ -21,53 +21,53 @@
     },
     "Soften triangle (Eq. 4)": {
       "continuity": {
-        "max_jump": 1.3605044892437508e-05,
-        "max_jump_normalised": 0.0061706555976675116,
-        "mean_step": 5.51199328705858e-06
+        "max_jump": 1.3604422988532181e-05,
+        "max_jump_normalised": 0.006170670888269659,
+        "mean_step": 5.511727669026216e-06
       },
       "gradient_vs_fd": {
-        "rel_l2_error": 2.109515198928996e-09,
+        "rel_l2_error": 2.10893522070672e-09,
         "cosine_similarity": 1.0,
-        "max_abs_error": 6.294099963444211e-10
+        "max_abs_error": 6.291468457320093e-10
       },
       "geometry_gradient": {
         "fraction_nonzero": 1.0,
-        "cosine_similarity_with_fd": 0.9999977699553174,
-        "mean_abs": 0.005085966695711043
+        "cosine_similarity_with_fd": 0.9999977699554821,
+        "mean_abs": 0.005085743245069794
       }
     },
     "RFDT (Eq. 11)": {
       "continuity": {
-        "max_jump": 2.277833736515672e-05,
-        "max_jump_normalised": 0.011368252207547233,
-        "mean_step": 5.009199512224597e-06
+        "max_jump": 2.2777336344353738e-05,
+        "max_jump_normalised": 0.011368299840548646,
+        "mean_step": 5.008958389519061e-06
       },
       "gradient_vs_fd": {
-        "rel_l2_error": 2.5498565360700513e-09,
-        "cosine_similarity": 1.0,
-        "max_abs_error": 3.976105000802477e-10
+        "rel_l2_error": 2.5492692037255015e-09,
+        "cosine_similarity": 1.0000000000000002,
+        "max_abs_error": 3.976309559394764e-10
       },
       "geometry_gradient": {
         "fraction_nonzero": 0.49382716049382713,
-        "cosine_similarity_with_fd": 0.9843500793978434,
-        "mean_abs": 0.004352868054357324
+        "cosine_similarity_with_fd": 0.9843500496686394,
+        "mean_abs": 0.0043526711945477935
       }
     },
     "RFDT + diffraction": {
       "continuity": {
-        "max_jump": 1.2881751757189825e-05,
-        "max_jump_normalised": 0.006742012299663973,
-        "mean_step": 6.101354532502683e-06
+        "max_jump": 1.2881222470282065e-05,
+        "max_jump_normalised": 0.006742050969316977,
+        "mean_step": 6.101068725779199e-06
       },
       "gradient_vs_fd": {
-        "rel_l2_error": 2.072868454348537e-09,
+        "rel_l2_error": 2.076032203919331e-09,
         "cosine_similarity": 1.0000000000000002,
-        "max_abs_error": 2.66568815632251e-10
+        "max_abs_error": 2.671227544714938e-10
       },
       "geometry_gradient": {
         "fraction_nonzero": 1.0,
-        "cosine_similarity_with_fd": 0.9964425353500488,
-        "mean_abs": 0.00545402435110908
+        "cosine_similarity_with_fd": 0.9964425955874678,
+        "mean_abs": 0.005453762940638973
       }
     }
   }
