@@ -624,6 +624,10 @@ that reason.
 
 ## 7. Honest limitations
 
+Every known physical approximation that is wrong or unjustified is catalogued in
+[GAPS.md](GAPS.md), with what each fix changed and what it did not, including the
+ones that made something worse. The short version follows.
+
 - **Scalar polarisation.** One complex coefficient per path. The default is the
   TE (perpendicular) coefficient, which behaves correctly both for conductors
   and at grazing incidence. A strict unpolarised treatment needs dual-polarised

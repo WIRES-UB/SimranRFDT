@@ -829,6 +829,111 @@ def test_exact_weight_is_continuous_and_differentiable_without_diffraction():
 
 
 # ---------------------------------------------------------------------------
+# numerically exact strip reference (method of moments)
+# ---------------------------------------------------------------------------
+def test_strip_solver_satisfies_its_own_boundary_condition():
+    """The total tangential field must vanish on a perfect conductor.
+
+    Machine precision is the right expectation here, because this is what the
+    linear system imposes at every collocation point.  It is also the check
+    that catches the trap in evaluating the radiated field *on* the strip: the
+    observation point then lies inside a source segment where the kernel is
+    logarithmically singular, and using its point value instead of the same
+    analytic integral the matrix uses makes a correct solution look badly
+    wrong.
+    """
+    from rfdt.reference import strip_scattered_field, strip_incident_field
+    k = 2 * np.pi / 0.06
+    width, phi = 1.0, np.pi / 2
+    for n in (100, 200):
+        dx = width / n
+        xs = torch.linspace(-width / 2 + dx / 2, width / 2 - dx / 2, n,
+                            dtype=torch.float64)
+        ys = torch.zeros_like(xs)
+        total = (strip_scattered_field(k, width, phi, xs, ys, n)
+                 + strip_incident_field(k, phi, xs, ys)).abs().max()
+        assert float(total) < 1e-12, (n, float(total))
+
+
+def test_strip_solver_reproduces_image_theory_when_wide():
+    """A strip many wavelengths across must reflect like an infinite plane.
+
+    Fixes the sign, the scale and the Green's function all at once, none of
+    which the boundary condition alone constrains, since a solution with the
+    wrong overall sign satisfies it just as well.
+    """
+    from rfdt.reference import strip_scattered_field
+    k = 2 * np.pi / 0.06
+    obs_y = 2.0
+    ratios = []
+    for width in (2.0, 4.0):
+        n = int(width / 0.06 * 12)
+        got = complex(strip_scattered_field(
+            k, width, np.pi / 2, torch.tensor([0.0]),
+            torch.tensor([obs_y]), n_segments=n)[0])
+        ratios.append(abs(got / (-np.exp(1j * k * obs_y))))
+    assert all(abs(r - 1.0) < 0.12 for r in ratios), ratios
+    assert ratios[1] > ratios[0]              # and it improves with width
+
+
+def test_exact_weight_beats_the_utd_one_against_the_strip_solver():
+    """The claim that matters, checked against physics rather than against us.
+
+    Everywhere else the gradient and the field are compared against closed
+    forms that only cover the easy regions, or against finite differences of
+    this same model, which shows the derivative is computed correctly and not
+    that it is right.  Here the reference is an independent numerical solution
+    of the actual scattering problem, and the reflector has a *width*, which
+    the half plane does not, so the transition the validity weight is supposed
+    to reproduce can be compared directly.
+
+    The strip edge crosses the specular point at width 0.35 m.
+    """
+    from rfdt.reference import strip_scattered_field
+    lam, k = 0.06, 2 * np.pi / 0.06
+    src, obs = (0.0, 1.0), (0.35, 1.0)
+
+    def exact(width):
+        n = max(300, int(width / lam * 120))
+        return abs(complex(strip_scattered_field(
+            k, width, 0.0, torch.tensor([obs[0]]), torch.tensor([obs[1]]),
+            n, source=src)[0]))
+
+    def modelled(width, weighting, diffraction):
+        mesh = scenes.plate_scene(plate_size=(1.0, 12.0), material="metal")
+        cfg = TracerConfig(max_order=1, weighting=weighting,
+                           enable_diffraction=diffraction, max_diffraction_order=1)
+        tx = Transmitter((0.0, 0.0, 1.0), 5e9, 20.0, Antenna("isotropic"))
+        rx = Receiver((0.35, 0.0, 1.0), Antenna("isotropic"))
+        w = torch.tensor(width, dtype=torch.float64)
+        one = torch.ones((), dtype=torch.float64)
+        v = mesh.vertices * torch.stack([w, one, one])
+        with torch.no_grad():
+            p = RFDTracer(mesh, cfg).trace(tx, rx, vertices=v)
+        keep = [i for i, kind in enumerate(p.kind) if kind != "los"]
+        return float(p.gain[:, keep].sum(-1).abs().sum())
+
+    wide = 1.6
+    ref_e, ref_r, ref_f = (exact(wide), modelled(wide, "rfdt", True),
+                           modelled(wide, "fresnel", False))
+    # at the boundary the exact answer is close to one half, and the exact
+    # weight has to land on it while the UTD one is an order of magnitude out
+    e_b = exact(0.35) / ref_e
+    assert abs(e_b - 0.5) < 0.05, e_b
+    assert abs(modelled(0.35, "fresnel", False) / ref_f - e_b) < 0.02
+    assert modelled(0.35, "rfdt", True) / ref_r < 0.15
+
+    # and across the whole transition the exact weight has to be the better fit
+    err_r = err_f = 0.0
+    widths = [0.20, 0.26, 0.30, 0.33, 0.35, 0.37, 0.40, 0.46, 0.60, 0.90]
+    for width in widths:
+        truth = exact(width) / ref_e
+        err_r += abs(modelled(width, "rfdt", True) / ref_r - truth)
+        err_f += abs(modelled(width, "fresnel", False) / ref_f - truth)
+    assert err_f < err_r / 3.0, (err_f / len(widths), err_r / len(widths))
+
+
+# ---------------------------------------------------------------------------
 # geometry and mesh structure
 # ---------------------------------------------------------------------------
 def test_welding_produces_correct_wedge_indices():
