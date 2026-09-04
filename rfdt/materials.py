@@ -767,6 +767,33 @@ def multilayer_coefficients(
     return {"tau": 1.0 / m00, "gamma": m10 / m00}
 
 
+def _air_reference_phase(f_hz, cos_ti: torch.Tensor, thickness) -> torch.Tensor:
+    """Removes the free-space propagation the tracer has already applied.
+
+    The transfer matrix refers its transmission coefficient to the front and
+    back faces of the wall, so it carries the whole propagation delay across
+    the thickness.  The tracer independently integrates ``exp(-jkL)`` along a
+    straight ray that runs through the wall region, so that same delay is
+    counted twice and every through-wall path picks up a spurious phase.
+
+    What settles the correction is not an argument but a case with a known
+    answer: a slab of vacuum must be exactly invisible.  Its coefficient must
+    be 1, and the transfer matrix returns unit magnitude with a phase of
+    precisely ``-k d cos(theta)``, at every angle and thickness.  Multiplying
+    by the conjugate of that removes it and makes vacuum exact.
+
+    This is the free-space *normal* phase, not the slanted ray path.  The two
+    differ, and no straight-ray model can reconcile them, because a real ray
+    refracts inside the wall and leaves laterally displaced.  Pinning the
+    vacuum limit exactly is the strongest constraint available under that
+    approximation, and it is the one used.
+    """
+    k0 = 2.0 * torch.pi * _t(f_hz) / C0
+    c = torch.as_tensor(cos_ti)
+    c = (c.real if c.is_complex() else c).to(FDTYPE).abs()
+    return torch.exp(1j * (k0 * _t(thickness) * c).to(CDTYPE))
+
+
 def slab_transmission(
     f_hz,
     cos_ti: torch.Tensor,
@@ -789,8 +816,9 @@ def slab_transmission(
             raise ValueError(
                 "coherent=False has no meaning for a stratified wall: the "
                 "internal reflections are what the layers are there to model")
-        return multilayer_coefficients(f_hz, cos_ti, mat.layers, polarisation,
-                                       params=None)["tau"]
+        tau = multilayer_coefficients(f_hz, cos_ti, mat.layers, polarisation,
+                                      params=None)["tau"]
+        return tau * _air_reference_phase(f_hz, cos_ti, mat.thickness)
 
     d = _t(mat.thickness if thickness is None else thickness)
     if coherent:
@@ -802,9 +830,10 @@ def slab_transmission(
         # agree at normal incidence and diverge as the square of the cosine,
         # which moved the Fabry-Perot resonances the wrong way with angle by
         # 22 % at 70 degrees.
-        return multilayer_coefficients(
+        tau = multilayer_coefficients(
             f_hz, cos_ti, [Layer(mat, float(d))], polarisation,
             params=[params])["tau"]
+        return tau * _air_reference_phase(f_hz, cos_ti, d)
 
     # single-pass form, no internal reflections: here the ray path is the
     # right length, because nothing is interfering with anything
@@ -814,7 +843,8 @@ def slab_transmission(
     else:
         g, t_in = fr["gamma_perp"], fr["tau_perp"]
     gamma = mat.propagation_constant(f_hz, params)
-    return t_in * (1.0 - g) * torch.exp(-gamma * d / fr["cos_tt"])
+    return (t_in * (1.0 - g) * torch.exp(-gamma * d / fr["cos_tt"])
+            * _air_reference_phase(f_hz, cos_ti, d))
 
 
 # ---------------------------------------------------------------------------

@@ -85,7 +85,15 @@ def previous_slab_formula(f_hz, cos_ti, mat, thickness):
     phi = mat.propagation_constant(f_hz) * torch.as_tensor(
         thickness, dtype=torch.float64) / cos_tt
     single = t_in * (1.0 - g) * torch.exp(-phi)
-    return single / (1.0 - g ** 2 * torch.exp(-2.0 * phi))
+    airy = single / (1.0 - g ** 2 * torch.exp(-2.0 * phi))
+    # Referred to the same plane as the current coefficient, so this panel
+    # isolates the phase-thickness error and nothing else.  Both formulas
+    # originally carried the whole propagation delay across the wall, which the
+    # tracer also applies along the ray; correcting that was a separate fix, and
+    # leaving it in here would mix the two corrections into one curve.
+    k0 = 2.0 * torch.pi * torch.as_tensor(f_hz, dtype=torch.float64) / C0
+    d = torch.as_tensor(thickness, dtype=torch.float64)
+    return airy * torch.exp(1j * (k0 * d * ct).to(torch.complex128))
 
 
 def stack_against_slab():

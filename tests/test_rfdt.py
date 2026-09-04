@@ -343,22 +343,56 @@ def _lossless(eps=4.0):
     return Material("lossless_test", eps, 0.0, 0.0, 0.0)
 
 
-def test_multilayer_matches_the_slab_at_normal_incidence():
-    """One layer must reproduce the homogeneous slab, phase included.
+def test_a_vacuum_slab_is_exactly_invisible():
+    """The reference plane, pinned by the one case with a known answer.
 
-    Normal incidence is where the old closed form and the transfer matrix
-    agree by construction, so this pins the interface algebra and the sign
-    convention without the phase-thickness question confusing the comparison.
+    The transfer matrix refers its coefficient to the wall's two faces, so it
+    carries the whole propagation delay across the thickness, and the tracer
+    independently integrates exp(-jkL) along a straight ray through the same
+    region.  That delay was therefore counted twice on every through-wall path.
+
+    A slab of vacuum has to be exactly invisible, which fixes the correction
+    without any appeal to argument: the coefficient must be 1 at every angle
+    and every thickness.  Magnitudes are untouched by the fix, so only a phase
+    check can catch a regression here.
     """
-    from rfdt.materials import Layer, multilayer_coefficients
     from rfdt.materials import Material
+    vac = Material("vac_slab_test", 1.0, 0.0, 0.0, 0.0)
+    for theta in (0.0, 30.0, 60.0, 80.0):
+        cos_ti = torch.tensor(float(np.cos(np.radians(theta))),
+                              dtype=torch.float64)
+        for d in (0.02, 0.10, 0.5):
+            tau = complex(slab_transmission(5e9, cos_ti, vac, thickness=d))
+            assert abs(tau - 1.0) < 1e-12, (theta, d, tau)
+
+
+def test_slab_differs_from_the_raw_matrix_by_exactly_the_air_phase():
+    """The two coefficients answer different questions, and must differ by one
+    known factor and nothing else.
+
+    ``multilayer_coefficients`` returns the physics: the transmission referred
+    to the wall's two faces, carrying the whole propagation delay across it.
+    ``slab_transmission`` returns what the tracer needs: the excess over free
+    space, because the tracer has already integrated exp(-jkL) along a straight
+    ray through that same region.
+
+    So they must agree exactly in magnitude and differ by exactly the free-space
+    normal phase across the thickness.  Asserting the relationship rather than
+    equality is what keeps both honest: an error in either one shows up here
+    unless it happens to be exactly this phase, which is the thing being
+    divided out.
+    """
+    from rfdt.materials import Layer, multilayer_coefficients, Material
     one = torch.tensor(1.0, dtype=torch.float64)
     lossy = Material("lossy_test", 5.24, 0.0, 0.15, 0.0)
+    d = 0.02
     for mat in (_lossless(), lossy):
         for f in (2e9, 5e9, 17e9):
-            a = complex(multilayer_coefficients(f, one, [Layer(mat, 0.02)])["tau"])
-            b = complex(slab_transmission(f, one, mat, thickness=0.02))
-            assert abs(a - b) < 1e-12, (mat.name, f, a, b)
+            raw = complex(multilayer_coefficients(f, one, [Layer(mat, d)])["tau"])
+            used = complex(slab_transmission(f, one, mat, thickness=d))
+            assert abs(abs(raw) - abs(used)) < 1e-12, (mat.name, f)
+            k = 2 * np.pi * f / C0
+            assert abs(used - raw * np.exp(1j * k * d)) < 1e-12, (mat.name, f)
 
 
 def test_vacuum_layer_is_a_pure_retardation():
@@ -1070,6 +1104,54 @@ def test_diffuse_restores_energy_only_where_the_surface_is_rough():
     rough_gain = power(mesh_rough, True) - power(mesh_rough, False)
     assert abs(metal_gain) < 1.0, metal_gain
     assert rough_gain > 3.0, rough_gain
+
+
+# ---------------------------------------------------------------------------
+# near-field diagnostic
+# ---------------------------------------------------------------------------
+def test_near_field_report_measures_the_ray_assumption():
+    """Turns an unstated assumption into numbers, and they must be the right ones.
+
+    Deliberately does not apply the Fraunhofer test to facet interactions.  A
+    specular bounce's aperture is its first Fresnel zone, whose far-field
+    distance is always several times the interaction distance itself, so that
+    criterion flags every path in every scene and means nothing.  Nor should it:
+    image theory is exact for an infinite plane at any distance.  What is
+    reported instead is hop length in wavelengths, which is what ray optics
+    actually requires, and the antenna's own aperture near field, which is a
+    genuine Fraunhofer problem.
+    """
+    mesh = scenes.furnished_room()
+    cfg = TracerConfig(max_order=2, enable_diffraction=True)
+    rx = Receiver((4.5, 1.0, 0.9), Antenna("isotropic"))
+    reports = {}
+    for freq in (5e9, 60e9):
+        tx = Transmitter((1.2, 1.2, 2.7), freq, 20.0, Antenna("isotropic"))
+        with torch.no_grad():
+            paths = RFDTracer(mesh, cfg).trace(tx, rx)
+        reports[freq] = paths.near_field_report(C0 / freq,
+                                                antenna_aperture_m=0.05)
+
+    for freq, rep in reports.items():
+        assert rep["paths"] > 0
+        assert rep["min_segment_wavelengths"] > 0.0
+        assert (rep["min_segment_wavelengths"]
+                <= rep["median_segment_wavelengths"])
+        assert 0.0 <= rep["fraction_paths_with_short_segment"] <= 1.0
+        # the Fresnel radius is a length and must shrink with the wavelength
+        assert rep["max_fresnel_radius_m"] > 0.0
+
+    lo, hi = reports[5e9], reports[60e9]
+    # the same geometry is many more wavelengths across at 60 GHz, so the ray
+    # assumption is better there and the Fresnel zones are smaller
+    assert hi["min_segment_wavelengths"] > lo["min_segment_wavelengths"]
+    assert hi["max_fresnel_radius_m"] < lo["max_fresnel_radius_m"]
+    # and it must actually find something, or it is not worth reporting: at
+    # 5 GHz some hops in a furnished room are only a few wavelengths long
+    assert lo["fraction_paths_with_short_segment"] > 0.0
+    # the antenna near field is the one genuine Fraunhofer question, and it
+    # grows with frequency for a fixed physical aperture
+    assert hi["antenna_fraunhofer_m"] > lo["antenna_fraunhofer_m"]
 
 
 # ---------------------------------------------------------------------------

@@ -212,6 +212,100 @@ class Paths:
         """Number of propagation paths held."""
         return int(self.gain.shape[-1])
 
+    def near_field_report(self, wavelength: float,
+                          antenna_aperture_m: Optional[float] = None,
+                          short_segment_wavelengths: float = 10.0
+                          ) -> Dict[str, float]:
+        """How far the ray-optical assumption has been pushed, as numbers.
+
+        Every interaction here assumes the field arriving at it is locally a
+        plane wave, which is a statement about distances in wavelengths.  The
+        assumption was previously unstated, so this reports it rather than
+        leaving it to be discovered.
+
+        The obvious test turns out to be the wrong one and is deliberately not
+        used.  A specular bounce's effective aperture is its first Fresnel
+        zone, of diameter ``2 sqrt(lambda L1 L2 / (L1 + L2))``, whose Fraunhofer
+        distance is ``8 L1 L2 / (L1 + L2)``.  That is always several times
+        larger than the interaction distance itself, so a reflection is never in
+        the far field of its own aperture, at any frequency or geometry.  This
+        is not a defect to report: image theory is exact for an infinite plane
+        at any distance, and the criterion simply does not apply to that
+        interaction.  Applying it anyway would flag every path in every scene
+        and mean nothing.
+
+        What does govern validity is reported instead:
+
+        ``min_segment_wavelengths``
+            The shortest hop anywhere, in wavelengths.  Ray optics needs each
+            hop to be many; a hop of order one wavelength is not a ray.
+        ``fraction_power_with_short_segment``
+            Share of the received *power* arriving through paths that contain a
+            hop shorter than the threshold.  This is the number to quote, and
+            it is not the same as the share of paths: a candidate search
+            produces many geometrically degenerate paths, some with segments of
+            literally zero length, which carry no energy at all.  Counting them
+            says a quarter of the paths are suspect when in truth almost none
+            of the power is.  ``fraction_paths_with_short_segment`` is kept
+            beside it precisely so the two can be compared.
+        ``max_fresnel_radius_m``
+            Largest first Fresnel zone radius over the interactions.  A facet
+            smaller than this does not reflect fully, and while the validity
+            weight handles that smoothly, the ray treatment behind it is
+            degrading.
+        ``antenna_fraunhofer_m``, ``fraction_first_hop_inside_fraunhofer``
+            Only when an aperture is given, since an antenna's own near field
+            is a real aperture problem rather than a Fresnel-zone one.  This
+            model has no aperture of its own, so the caller must supply the
+            physical one.
+        """
+        if not self.nodes:
+            return {"paths": 0}
+        seg_min, fres_max, short = [], [], []
+        first_hop = []
+        weights = []
+        for j, nodes in enumerate(self.nodes):
+            weights.append(self.gain[:, j].abs() ** 2)
+            d = nodes[:, 1:, :] - nodes[:, :-1, :]
+            lengths = d.norm(dim=-1)                    # (R, hops)
+            seg_min.append(lengths.min(dim=-1).values)
+            first_hop.append(lengths[:, 0])
+            short.append((lengths < short_segment_wavelengths * wavelength)
+                         .any(dim=-1))
+            if lengths.shape[-1] >= 2:
+                a, b = lengths[:, :-1], lengths[:, 1:]
+                fres_max.append(torch.sqrt(
+                    (wavelength * a * b / (a + b).clamp_min(1e-12))
+                    .clamp_min(0.0)).max(dim=-1).values)
+        seg = torch.cat(seg_min)
+        flag = torch.cat(short)
+        power = torch.cat(weights)
+        total = power.sum().clamp_min(1e-300)
+        # the shortest hop that actually carries energy, which is the one the
+        # ray assumption has to survive; the global minimum is dominated by
+        # degenerate candidates of zero length and zero contribution
+        carries = power > power.max() * 1e-6
+        seg_live = seg[carries] if bool(carries.any()) else seg
+        out = {
+            "paths": int(seg.numel()),
+            "min_segment_wavelengths": float(seg.min() / wavelength),
+            "min_segment_wavelengths_carrying_power":
+                float(seg_live.min() / wavelength),
+            "median_segment_wavelengths": float(seg.median() / wavelength),
+            "fraction_power_with_short_segment":
+                float((power * flag.to(FDTYPE)).sum() / total),
+            "fraction_paths_with_short_segment": float(flag.to(FDTYPE).mean()),
+            "short_segment_threshold_wavelengths": float(short_segment_wavelengths),
+        }
+        if fres_max:
+            out["max_fresnel_radius_m"] = float(torch.cat(fres_max).max())
+        if antenna_aperture_m:
+            ff = 2.0 * float(antenna_aperture_m) ** 2 / wavelength
+            out["antenna_fraunhofer_m"] = ff
+            out["fraction_first_hop_inside_fraunhofer"] = float(
+                (torch.cat(first_hop) < ff).to(FDTYPE).mean())
+        return out
+
     def strongest(self, n: int = 10):
         """Indices of the ``n`` strongest paths, by mean power over receivers."""
         p = (self.gain.abs() ** 2).mean(dim=0)

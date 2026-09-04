@@ -9,7 +9,7 @@
     "default_model": "miller_brown",
     "sigma_provenance": "order-of-magnitude literature estimates, NOT ITU-R P.2040-1 and NOT measurements of the simulated surfaces",
     "known_bias": "energy removed from the specular direction is not re-radiated, since diffuse scattering is not modelled, so every roughness-enabled power here is a lower bound",
-    "runtime_s": 334.66917085647583
+    "runtime_s": 326.0794458389282
   },
   "curves": {
     "cos_theta": [

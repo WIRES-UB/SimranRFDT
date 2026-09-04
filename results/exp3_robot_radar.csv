@@ -46,12 +46,12 @@ A_wall_material,foam_board,peak_range_m,3.005731675260417
 B_nlos_board,no board,target_echo_dbm,-50.79256829143476
 B_nlos_board,no board,target_snr_db,15.741938459290594
 B_nlos_board,no board,excess_loss_db,0.0
-B_nlos_board,plastic_board,target_echo_dbm,-52.79981120982555
-B_nlos_board,plastic_board,target_snr_db,13.734695540899807
-B_nlos_board,plastic_board,excess_loss_db,-2.007242918390787
-B_nlos_board,paper_board,target_echo_dbm,-54.11994731198746
-B_nlos_board,paper_board,target_snr_db,12.414559438737896
-B_nlos_board,paper_board,excess_loss_db,-3.327379020552698
-B_nlos_board,foam_board,target_echo_dbm,-51.16028970436648
-B_nlos_board,foam_board,target_snr_db,15.37421704635888
-B_nlos_board,foam_board,excess_loss_db,-0.367721412931715
+B_nlos_board,plastic_board,target_echo_dbm,-52.80746645403252
+B_nlos_board,plastic_board,target_snr_db,13.727040296692834
+B_nlos_board,plastic_board,excess_loss_db,-2.01489816259776
+B_nlos_board,paper_board,target_echo_dbm,-54.12372036941346
+B_nlos_board,paper_board,target_snr_db,12.410786381311894
+B_nlos_board,paper_board,excess_loss_db,-3.3311520779787003
+B_nlos_board,foam_board,target_echo_dbm,-51.08899843656888
+B_nlos_board,foam_board,target_snr_db,15.445508314156477
+B_nlos_board,foam_board,excess_loss_db,-0.29643014513411714

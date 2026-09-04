@@ -51,7 +51,7 @@
       4.6
     ],
     "partition_end_y": 3.5,
-    "runtime_s": 33.123126745224
+    "runtime_s": 30.964614152908325
   },
   "runs": {
     "first_order": {
@@ -183,7 +183,7 @@
       ],
       "n_paths": 85,
       "n_double_paths": 0,
-      "seconds": 0.9524080753326416
+      "seconds": 0.9329547882080078
     },
     "second_order": {
       "total_dbm": [
@@ -314,7 +314,7 @@
       ],
       "n_paths": 1201,
       "n_double_paths": 1116,
-      "seconds": 17.04278302192688
+      "seconds": 16.165682077407837
     },
     "second_order_no_slope": {
       "total_dbm": [
@@ -445,7 +445,7 @@
       ],
       "n_paths": 1201,
       "n_double_paths": 1116,
-      "seconds": 14.86011290550232
+      "seconds": 13.609124183654785
     }
   },
   "deep_shadow": {
@@ -656,7 +656,7 @@
     "mean_change_shadowed_db": 0.21670205995674655,
     "mean_change_lit_db": 0.5244648946313006,
     "max_slope_change_db": 0.2830073951497951,
-    "cost_ratio": 17.89441255627159,
+    "cost_ratio": 17.327401372212694,
     "deepest_shadow_change_db": 0.060387668793026705
   }
 }

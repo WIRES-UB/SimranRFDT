@@ -642,11 +642,20 @@ ones that made something worse. The short version follows.
   with a two-variable transition function, which this does not implement. Pairs
   closer than a wavelength are rejected rather than approximated, and no
   diffraction is computed from concave junctions.
-- **Roughness removes energy without re-radiating it.** The roughness factor
-  takes power out of the specular direction, and nothing puts it back, because
-  diffuse scattering is not modelled. Every roughness-enabled power is
-  therefore a lower bound, by a known and signed amount. The two effects belong
-  together and should be added together.
+- **Diffuse scattering is first order only.** The energy roughness removes is
+  now re-radiated (`enable_diffuse`, off by default on cost), which at 60 GHz is
+  worth 10 dB on a concrete or foam-walled route and nothing at all on metal,
+  since a smooth surface scatters nothing. But a facet scatters only the field
+  arriving directly from the transmitter: it does not scatter what arrives by
+  reflection, and a scattered contribution cannot then go on to reflect or
+  diffract. In a closed reflective room those higher-order terms are not
+  obviously negligible and nothing here bounds them.
+- **The diffuse normalisation is symmetrised, not symmetric.** Conservation
+  fixes it from the incident side alone and is not reciprocal; the symmetrised
+  form is exactly reciprocal and radiates less. Reciprocity is a theorem, so it
+  is the property held exact, and the cost is a measured energy deficit set by
+  the lobe width: 0.96 dB at the default, falling to 0.17 dB as the lobe
+  narrows.
 - **Roughness is not applied to the human body entry.** Its surface height is
   deliberately zero, which is not a claim that a body is smooth. The Rayleigh
   factor assumes a planar interface with small-scale height variation, and a
@@ -658,14 +667,25 @@ ones that made something worse. The short version follows.
   board is a slab and can be a stack. A closed solid still uses the
   two-interface volume model, so the partition box in the furnished room is
   homogeneous however its material is defined.
-- **The stack coefficient carries the full propagation delay across the wall**,
-  matching what `slab_transmission` has always returned, while the tracer also
-  applies `exp(-jkL)` over a straight ray path that runs through the wall. The
-  air-equivalent phase across the thickness is therefore counted twice. For
-  thin partitions this is a fixed offset per crossing rather than an error that
-  accumulates, but it is a real inconsistency and it is recorded rather than
-  quietly changed, because correcting it would alter the meaning of a
-  coefficient the rest of the simulator already agrees on.
+- **Ray optics is assumed at every hop**, and how far that is pushed is now
+  measured rather than left unstated. `Paths.near_field_report` is recorded with
+  the experiment 2 results: at 5 GHz the shortest hop carrying energy is
+  0.25 wavelengths, and
+  1.1% of the received power arrives
+  through paths containing a hop under ten wavelengths. It reports the share of
+  *power*, not of paths, because a candidate search produces many degenerate
+  paths of zero length carrying no energy; counting those says
+  25% of paths are suspect when almost
+  none of the power is. Near-field coupling between the antenna and the robot's
+  own chassis remains unmodelled.
+- **The slab reference plane is exact only in the vacuum limit.**
+  `slab_transmission` returns the excess over free space rather than the
+  face-to-face coefficient, because the tracer already integrates `exp(-jkL)`
+  along a straight ray through the wall. What pins the correction is that a
+  vacuum slab must be exactly invisible, which it now is to 7e-15 at every angle
+  and thickness. The free-space normal phase and the slanted ray path still
+  differ, and no straight-ray model reconciles them, because a real ray refracts
+  inside the wall and leaves laterally displaced.
 - **The surface heights are estimates, not measurements.** Unlike the
   permittivities, which are ITU-R P.2040-1 regressions, the roughness values in
   `ROUGHNESS_SIGMA_M` are order-of-magnitude literature figures carrying about

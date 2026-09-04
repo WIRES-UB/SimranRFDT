@@ -15,7 +15,7 @@
     "route_length_m": 11.82605932850463,
     "freq_samples_per_band": 5,
     "max_order": 2,
-    "runtime_s": 191.21081399917603
+    "runtime_s": 184.21422386169434
   },
   "bands": {
     "5 GHz": {
@@ -82,6 +82,18 @@
             -35.92735446808754,
             -38.866488959111784
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.24777848934865168,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.03223050572206813,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 1.0,
           "sigma_S_per_m": 10000000.0,
           "loss_tangent": 35950207.16904469,
@@ -156,6 +168,18 @@
             -37.732510735933246,
             -41.30329856794991
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.24777848934865168,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.011476282394700173,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 5.24,
           "sigma_S_per_m": 0.16269578921069008,
           "loss_tangent": 0.11162113220716667,
@@ -230,6 +254,18 @@
             -38.014757531321436,
             -41.458857373853704
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.24777848934865168,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.00914215582822483,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 3.91,
           "sigma_S_per_m": 0.03079017503334887,
           "loss_tangent": 0.02830979977544857,
@@ -304,6 +340,18 @@
             -37.46638301698394,
             -40.9602844761438
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.24777848934865168,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.01356640068540818,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 7.074,
           "sigma_S_per_m": 0.02442017138143929,
           "loss_tangent": 0.012410379138624804,
@@ -378,6 +426,18 @@
             -37.54980468705047,
             -41.0493283354495
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.24777848934865168,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.012803734476381615,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 6.31,
           "sigma_S_per_m": 0.031081568332541144,
           "loss_tangent": 0.017708222197997985,
@@ -452,6 +512,18 @@
             -38.33848186899334,
             -41.69953387231292
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.24777848934865168,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.007242326369036823,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 2.73,
           "sigma_S_per_m": 0.03855682326831434,
           "loss_tangent": 0.05077383825187338,
@@ -526,6 +598,18 @@
             -38.4309749964021,
             -41.83619118628583
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.24777848934865168,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.006940463541554638,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 2.58,
           "sigma_S_per_m": 0.07614762057080285,
           "loss_tangent": 0.10610553236240974,
@@ -600,6 +684,18 @@
             -38.75010900425089,
             -41.8643079782819
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.24777848934865168,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.005377430043866213,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 1.99,
           "sigma_S_per_m": 0.02637873157388232,
           "loss_tangent": 0.047654314820989425,
@@ -674,6 +770,18 @@
             -39.2096761331107,
             -41.82598511835157
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.24777848934865168,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.0038703796903637837,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 1.48,
           "sigma_S_per_m": 0.006205623739422115,
           "loss_tangent": 0.015073882367930188,
@@ -748,6 +856,18 @@
             -39.93216113253581,
             -41.52433513983517
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.4885596352074307,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.0026520755911708443,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 1.06,
           "sigma_S_per_m": 0.0002948522646936857,
           "loss_tangent": 0.001,
@@ -822,6 +942,18 @@
             -36.52260896641645,
             -39.7970827970537
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 0.24777848934865168,
+            "median_segment_wavelengths": 24.830676428896517,
+            "fraction_power_with_short_segment": 0.024496586739477404,
+            "fraction_paths_with_short_segment": 0.2513020833333333,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 2.4750299147278523,
+            "antenna_fraunhofer_m": 0.08255711356154265,
+            "fraction_first_hop_inside_fraunhofer": 0.0
+          },
           "eps_real": 56.49553191854704,
           "sigma_S_per_m": 2.8674834008743386,
           "loss_tangent": 0.18246862860563096,
@@ -901,6 +1033,18 @@
             -77.1664569308167,
             -94.32671860401129
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 2.97334187218382,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 0.00036351267977687446,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 1.0,
           "sigma_S_per_m": 10000000.0,
           "loss_tangent": 2995850.5974203907,
@@ -975,6 +1119,18 @@
             -98.41370336257808,
             -97.83855911969155
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 5.862715622489167,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 1.902884607811055e-05,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 5.24,
           "sigma_S_per_m": 1.136349391186786,
           "loss_tangent": 0.06496818706994714,
@@ -1049,6 +1205,18 @@
             -98.76589356344263,
             -97.78949227386788
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 5.862715622489167,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 3.186983929026212e-06,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 3.91,
           "sigma_S_per_m": 0.045822750822471024,
           "loss_tangent": 0.0035109492436558956,
@@ -1123,6 +1291,18 @@
             -90.10008139034687,
             -96.87230632086589
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 5.862715622489167,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 0.00018516525086012425,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 7.074,
           "sigma_S_per_m": 0.24394188623759133,
           "loss_tangent": 0.010330978875045874,
@@ -1197,6 +1377,18 @@
             -90.71716315449285,
             -96.90866552227982
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 5.862715622489167,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 0.00017548861796898733,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 6.31,
           "sigma_S_per_m": 0.866878607103203,
           "loss_tangent": 0.04115750860508854,
@@ -1271,6 +1463,18 @@
             -96.94700085313336,
             -97.59577666666102
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 5.862715622489167,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 7.182490505778037e-05,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 2.73,
           "sigma_S_per_m": 0.398099860544664,
           "loss_tangent": 0.043686729122553336,
@@ -1345,6 +1549,18 @@
             -98.11395560029013,
             -97.75970574656112
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 5.862715622489167,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 3.355394014697673e-05,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 2.58,
           "sigma_S_per_m": 0.5289537606610798,
           "loss_tangent": 0.061421179840475126,
@@ -1419,6 +1635,18 @@
             -98.08323123354525,
             -97.73631476989732
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 5.862715622489167,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 3.364679196836144e-05,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 1.99,
           "sigma_S_per_m": 0.3783732001363753,
           "loss_tangent": 0.05696229033549875,
@@ -1493,6 +1721,18 @@
             -98.65805053700008,
             -97.8262525467779
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 5.862715622489167,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 7.422491115197965e-06,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 1.48,
           "sigma_S_per_m": 0.08972330844482361,
           "loss_tangent": 0.018162001838308028,
@@ -1567,6 +1807,18 @@
             -98.8358612709051,
             -97.6896101464555
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 5.862715622489167,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 3.476908396343256e-07,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 1.06,
           "sigma_S_per_m": 0.0035382271763242283,
           "loss_tangent": 0.001,
@@ -1641,6 +1893,18 @@
             -86.85011761785034,
             -95.8723999123808
           ],
+          "near_field": {
+            "paths": 5376,
+            "min_segment_wavelengths": 0.0,
+            "min_segment_wavelengths_carrying_power": 5.862715622489167,
+            "median_segment_wavelengths": 297.9681171467582,
+            "fraction_power_with_short_segment": 0.00022853827826846868,
+            "fraction_paths_with_short_segment": 0.0078125,
+            "short_segment_threshold_wavelengths": 10.0,
+            "max_fresnel_radius_m": 0.714479593760251,
+            "antenna_fraunhofer_m": 0.9906853627385117,
+            "fraction_first_hop_inside_fraunhofer": 0.11049107142857142
+          },
           "eps_real": 9.440687124212653,
           "sigma_S_per_m": 17.159767913981227,
           "loss_tangent": 0.5445377045156903,

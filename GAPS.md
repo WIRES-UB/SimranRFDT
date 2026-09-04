@@ -129,6 +129,65 @@ alpha 16, 0.17 dB at alpha 32. A rigorous fix needs a scattering model whose
 normalisation is symmetric by construction rather than symmetrised afterwards.
 See also gap 19.
 
+### Gap 9. The far-field assumption was unstated
+
+Every interaction assumes the field arriving at it is locally a plane wave,
+which is a statement about distances in wavelengths, and nothing reported how
+far that was being pushed.
+
+**Fixed by** `Paths.near_field_report`, which measures it and is recorded with
+the experiment 2 results rather than being available only on request.
+
+The obvious criterion turned out to be vacuous and is deliberately not used. A
+specular bounce's effective aperture is its first Fresnel zone, of diameter
+`2 sqrt(lambda L1 L2 / (L1 + L2))`, whose Fraunhofer distance is
+`8 L1 L2 / (L1 + L2)`. That is always several times the interaction distance
+itself, so a reflection is never in the far field of its own aperture, at any
+frequency or geometry. Applying the test anyway would flag every path in every
+scene and mean nothing, and it is not even a defect: image theory is exact for
+an infinite plane at any distance. What is reported instead is hop length in
+wavelengths, which is what ray optics actually requires, and the antenna's own
+aperture near field, which is a genuine Fraunhofer problem.
+
+**Difference:** it found two real things. At 5 GHz the shortest hop carrying
+energy is 1.44 wavelengths, and 7.0 percent of the received power arrives
+through paths containing a hop under ten wavelengths. At 60 GHz that falls to
+zero, but 9.5 percent of first hops sit inside a 5 cm antenna's Fraunhofer
+distance.
+
+It also caught a flaw in itself. Counting *paths* rather than power reported a
+quarter of them as suspect, including some with segments of literally zero
+length, because a candidate search produces many degenerate paths that carry no
+energy. Both numbers are now reported so the two cannot be confused.
+
+**Still open:** near-field coupling between the antenna and the robot's own
+chassis is not modelled at all, and this reports the assumption rather than
+removing it.
+
+### Gap 13. The slab reference plane was double counted
+
+The transfer matrix refers its transmission coefficient to the wall's two
+faces, so it carries the whole propagation delay across the thickness, and the
+tracer independently integrates `exp(-jkL)` along a straight ray through the
+same region. Every through-wall path therefore picked up a spurious phase.
+
+**Fixed by** dividing out the free-space normal phase across the thickness.
+What settles the correction is not an argument but a case with a known answer:
+a slab of vacuum must be exactly invisible. Its coefficient must be 1, and the
+transfer matrix returned unit magnitude with a phase of precisely
+`-k d cos(theta)` at every angle and thickness tested. Removing it makes vacuum
+exact to 7e-15.
+
+**Difference:** magnitudes are untouched, since it is a pure phase correction,
+so only a phase check could ever have caught it. It moves the interference
+between a through-wall path and every other path reaching the same receiver.
+
+**Still open:** the free-space normal phase and the slanted ray path differ, and
+no straight-ray model can reconcile them, because a real ray refracts inside the
+wall and leaves laterally displaced. Pinning the vacuum limit exactly is the
+strongest constraint available under that approximation, not a derivation of the
+oblique case.
+
 ### Gap 17. No reference with a width
 
 The half plane is exact but has no width parameter, and width is the exact
@@ -208,14 +267,6 @@ and foam is the lowest-contrast material in the study. Real edges are also
 rounded, which is a different regime again. Measure against the strip solver
 before building anything; it may prove acceptable.
 
-### Gap 9. Far-field assumption at every hop
-
-Borderline for an antenna five wavelengths from a wall at 5 GHz, and near-field
-coupling to the robot's own chassis is absent entirely. Cheap partial fix
-available: compute the Fraunhofer distance per interaction and report the
-fraction of paths violating it, turning an unstated assumption into a printed
-number.
-
 ### Gap 10. No measured validation
 
 Everything is validated against closed-form electromagnetics, numerically exact
@@ -238,14 +289,6 @@ than left to whichever fires.
 A facet has four, each contributing its own transition, and the exact treatment
 superposes them. Using one leaves the ripple of a single edge and misses the
 others.
-
-### Gap 13. The slab reference plane is double counted
-
-The slab coefficient carries the full propagation delay across a wall while the
-tracer also applies `exp(-jkL)` along a ray running through it, so the
-air-equivalent phase is counted twice: a fixed offset per crossing. Documented
-rather than changed, because it alters the meaning of a coefficient everything
-else agrees on.
 
 ### Gap 14. Layering applies to plates, not closed solids
 
@@ -288,8 +331,8 @@ not obviously negligible, and nothing here bounds them.
 
 ## Tally
 
-Six closed (2, 3, 4, 5, 7, 17), one closed for a free edge (1), twelve open
-(6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19).
+Eight closed (2, 3, 4, 5, 7, 9, 13, 17), one closed for a free edge (1), ten
+open (6, 8, 10, 11, 12, 14, 15, 16, 18, 19).
 
 Two of the open ones exist because a fix created them: gap 5 was made worse by
 gap 4 before being closed, and gap 19 is the residue of closing it.

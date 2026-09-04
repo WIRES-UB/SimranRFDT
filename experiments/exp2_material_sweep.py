@@ -116,9 +116,17 @@ def run_route(material, f_centre, traj, cfg):
     freqs = np.linspace(f_centre * (1 - FREQ_SPAN / 2),
                         f_centre * (1 + FREQ_SPAN / 2), N_FREQ)
     rss, ds, kf, cb, asp, npath = [], [], [], [], [], []
+    near = None
     for f in freqs:
         tx = antennas.wifi_ap(AP_POSITION, float(f), TX_POWER_DBM)
         paths = tracer.trace(tx, rx, rx_positions=traj.positions)
+        if near is None:
+            # How far the ray-optical assumption is being pushed, recorded with
+            # the result rather than left for a reader to wonder about.  Taken
+            # at the first frequency of the band, since it is geometric and
+            # varies only through the wavelength.
+            near = paths.near_field_report(C0 / float(f),
+                                           antenna_aperture_m=0.05)
         rss.append(paths.power_dbm(TX_POWER_DBM))
         ds.append(rms_delay_spread(paths.delay, paths.gain) * 1e9)
         kf.append(rice_k_factor_db(paths.gain))
@@ -142,6 +150,7 @@ def run_route(material, f_centre, traj, cfg):
         "angular_spread_deg": float(torch.stack(asp).mean()),
         "n_paths": int(np.mean(npath)),
         "rss_profile_dbm": rss_avg.tolist(),
+        "near_field": near,
     }
 
 
